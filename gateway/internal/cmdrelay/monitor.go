@@ -15,9 +15,6 @@ const (
 	authMember  = "RouteMessageBytes"
 	monitorRule = "type='method_call',destination='" + authName + "',interface='" + authName + "',member='" +
 		authMember + "'"
-	// The router's owner changes (a restart): only its current owner's replies are delivered.
-	ownerRule = "type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged'," +
-		"arg0='" + routerName + "'"
 )
 
 // Monitor watches the system bus for the router's replies with org.freedesktop.DBus.Monitoring.BecomeMonitor (root
@@ -28,6 +25,13 @@ type Monitor struct {
 	Deliver func(body []byte)
 	SetUp   func(bool)
 	Log     *log.Logger
+	// TrustUID is the command-router user's uid: only a reply whose sender connection runs as it is delivered.
+	// (The router replies from a second, shared bus connection, not the one that owns com.tesla.CommandRouter, so
+	// the sender is checked by uid, not by name.)
+	TrustUID int
+	// SenderUID resolves a sender's uid; nil: GetConnectionUnixUser on a separate ordinary connection (a monitor
+	// cannot make calls).
+	SenderUID func(sender string) (int, error)
 }
 
 func systemBus() (*dbus.Conn, error) {
@@ -86,12 +90,22 @@ func (m *Monitor) once(ctx context.Context, dial func() (*dbus.Conn, error)) err
 		conn.Eavesdrop(nil)
 		conn.Close()
 	}()
-	// Who the router is now, asked before becoming a monitor (a monitor cannot make calls); NameOwnerChanged keeps it
-	// current afterwards.
-	var owner string
-	if err := conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetNameOwner", 0, routerName).Store(&owner); err != nil {
-		owner = "" // the router is not running: nothing is delivered until it appears
+	senderUID := m.SenderUID
+	if senderUID == nil {
+		q, err := dial()
+		if err != nil {
+			return err
+		}
+		defer q.Close()
+		senderUID = func(sender string) (int, error) {
+			ctx, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			var uid uint32
+			err := q.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetConnectionUnixUser", 0, sender).Store(&uid)
+			return int(uid), err
+		}
 	}
+	trusted := map[string]bool{} // sender unique name -> runs as TrustUID (unique names are never reused)
 	// Eavesdrop diverts every incoming message, BecomeMonitor's own reply included, so the call goes out with no
 	// reply expected and success is the bus driver's NameLost for our unique name (a monitor loses all its names).
 	// Eavesdropping from the start also means godbus never answers a monitored call: a monitor must not send.
@@ -103,7 +117,7 @@ func (m *Monitor) once(ctx context.Context, dial func() (*dbus.Conn, error)) err
 	}
 	self := names[0]
 	call := conn.BusObject().Go("org.freedesktop.DBus.Monitoring.BecomeMonitor", dbus.FlagNoReplyExpected, nil,
-		[]string{monitorRule, ownerRule}, uint32(0))
+		[]string{monitorRule}, uint32(0))
 	if call.Err != nil {
 		return call.Err
 	}
@@ -125,11 +139,23 @@ func (m *Monitor) once(ctx context.Context, dial func() (*dbus.Conn, error)) err
 				m.SetUp(true)
 				continue
 			}
-			if o, ok := routerOwnerChange(msg); ok {
-				owner = o
+			body := replyBody(msg)
+			if body == nil {
 				continue
 			}
-			if body := replyBody(msg); body != nil && owner != "" && hdr(msg, dbus.FieldSender) == owner {
+			sender := hdr(msg, dbus.FieldSender)
+			ok, seen := trusted[sender]
+			if !seen {
+				uid, err := senderUID(sender)
+				ok = err == nil && uid == m.TrustUID
+				if err == nil { // a failed lookup is retried on the sender's next message
+					if len(trusted) > 256 {
+						trusted = map[string]bool{}
+					}
+					trusted[sender] = ok
+				}
+			}
+			if ok {
 				m.Deliver(body)
 			}
 		}
@@ -172,18 +198,4 @@ func hdr(msg *dbus.Message, f dbus.HeaderField) string {
 	}
 	s, _ := v.Value().(string)
 	return s
-}
-
-// routerOwnerChange is the bus driver's NameOwnerChanged for the router: its new owner ("" when it went away).
-func routerOwnerChange(msg *dbus.Message) (string, bool) {
-	if msg == nil || msg.Type != dbus.TypeSignal || hdr(msg, dbus.FieldSender) != "org.freedesktop.DBus" ||
-		hdr(msg, dbus.FieldMember) != "NameOwnerChanged" || len(msg.Body) != 3 {
-		return "", false
-	}
-	name, _ := msg.Body[0].(string)
-	newOwner, _ := msg.Body[2].(string)
-	if name != routerName {
-		return "", false
-	}
-	return newOwner, true
 }

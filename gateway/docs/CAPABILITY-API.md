@@ -62,7 +62,8 @@ Capability ids: SUMMON `0x01`, CAMERA `0x02`, DASHCAM `0x03`, VCMD `0x04`, ECHO 
     to the router with no answer: it may have run, so wait for its reply rather than resending). `0xD2` READY: the relay's bus monitor is up (sent once).
   - The relay injects through `com.tesla.CommandRouter.RouteFromAuthd` from a child running as the authd user (it
     redials a dropped bus; a dead child is restarted) and reads the replies with a root D-Bus monitor on
-    `com.tesla.Auth.RouteMessageBytes`, believing only the router's current owner (`NameOwnerChanged`). Nothing reaches Tesla's
+    `com.tesla.Auth.RouteMessageBytes`, believing only replies sent by the command-router user (by uid: the router
+    replies from a second, shared bus connection, not the one that owns its name; seen on the car 2026-11-27). Nothing reaches Tesla's
     servers. Routing addresses are rewritten per session (a phone only ever receives replies to its own requests; at
     most 8 per session, the oldest forgotten first);
     only the VEHICLE_SECURITY and INFOTAINMENT domains are accepted; 20 messages/s (burst 40). The car checks every

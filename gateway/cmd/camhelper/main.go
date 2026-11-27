@@ -96,6 +96,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	authSock := fs.String("auth-sock", authproto.DefaultSocket, "the sign-in socket (same directory as -sock)")
 	cmdSock := fs.String("cmd-sock", "", "the Direct commands socket (default: cmd.sock next to -sock; off = no relay)")
 	injectUser := fs.String("inject-user", "authd", "the user the command-router accepts RouteFromAuthd from")
+	routerUser := fs.String("router-user", "command-router", "the user the command-router runs as (its replies are believed)")
 	summonLive := fs.String("summon-live", camhelper.DefaultSummonLive, "summonhelper's live file (SUMMON mode's trust signal)")
 	summonUID := fs.Int("summon-uid", camhelper.DefaultSummonUID, "summonhelper's uid: the only owner of the live file and its dir")
 	authdPin := fs.String("authd-sha256", authority.DefaultAuthdSHA256,
@@ -139,7 +140,8 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 		if err == nil {
 			err = serve(ctx, serveConfig{
 				state: *state, sock: *sock, authSock: *authSock, cmdSock: *cmdSock, injectUser: *injectUser,
-				authdPin: *authdPin, gwUID: *gwUID, gwGID: *gwGID,
+				routerUser: *routerUser,
+				authdPin:   *authdPin, gwUID: *gwUID, gwGID: *gwGID,
 				cred:   &syscall.Credential{Uid: uint32(*childUID), Gid: uint32(*childGID), Groups: gs},
 				writer: camhelper.WriterKind(*writer), teslacam: *teslacam, log: lg,
 				summonLive: *summonLive, summonUID: *summonUID,
@@ -245,6 +247,7 @@ type serveConfig struct {
 	authSock     string
 	cmdSock      string // "" = no Direct commands relay
 	injectUser   string
+	routerUser   string
 	authdPin     string
 	gwUID, gwGID int
 	cred         *syscall.Credential
@@ -386,6 +389,12 @@ func startCmdRelay(ctx context.Context, c serveConfig) func() {
 		c.log.Printf("Direct commands off: %v", err)
 		return func() {}
 	}
+	// Only replies sent by the command-router user are believed (internal/cmdrelay Monitor.TrustUID).
+	router, err := lookupUser(c.routerUser)
+	if err != nil {
+		c.log.Printf("Direct commands off: %v", err)
+		return func() {}
+	}
 	self, err := os.Executable()
 	if err != nil {
 		c.log.Printf("Direct commands off: %v", err)
@@ -402,14 +411,16 @@ func startCmdRelay(ctx context.Context, c serveConfig) func() {
 	monDone := make(chan struct{})
 	go func() {
 		defer close(monDone)
-		(&cmdrelay.Monitor{Deliver: relay.Deliver, SetUp: relay.SetMonitorUp, Log: c.log}).Run(mctx)
+		(&cmdrelay.Monitor{Deliver: relay.Deliver, SetUp: relay.SetMonitorUp, Log: c.log,
+			TrustUID: int(router.Uid)}).Run(mctx)
 	}()
 	go func() {
 		if err := relay.Serve(ln); err != nil {
 			c.log.Printf("Direct commands socket: %v", err)
 		}
 	}()
-	c.log.Printf("Direct commands on %s (injector as %s uid %d)", c.cmdSock, c.injectUser, cred.Uid)
+	c.log.Printf("Direct commands on %s (injector as %s uid %d; replies from %s uid %d)", c.cmdSock, c.injectUser,
+		cred.Uid, c.routerUser, router.Uid)
 	return func() {
 		relay.Shutdown()
 		ln.Close()

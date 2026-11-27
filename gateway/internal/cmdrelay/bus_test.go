@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -77,8 +79,9 @@ func TestBusRoundTrip(t *testing.T) {
 	up := make(chan bool, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// No SenderUID: the real GetConnectionUnixUser lookup on the private bus (every test connection is our uid).
 	m := &Monitor{Dial: dial, Deliver: func(b []byte) { got <- b }, SetUp: func(v bool) { up <- v },
-		Log: log.New(io.Discard, "", 0)}
+		Log: log.New(io.Discard, "", 0), TrustUID: os.Getuid()}
 	go m.Run(ctx)
 	select {
 	case v := <-up:
@@ -185,24 +188,40 @@ func privateDial(bus *bustest.Bus) func() (*dbus.Conn, error) {
 	}
 }
 
-// Only the router's current owner is believed: a spoofed RouteMessageBytes from another connection is ignored, and
-// after the router restarts (a new unique name) its replies are delivered again.
-func TestMonitorBelievesOnlyTheRouter(t *testing.T) {
+// Only a sender running as the router's user is believed, whichever of its connections sends (the car's router
+// replies from a second, shared connection, not the one that owns its name); another user's spoof is ignored.
+func TestMonitorTrustsTheRouterUser(t *testing.T) {
 	bus := bustest.Start(t)
 	ac := bus.Conn(t)
 	if err := ac.Export(fakeAuthd{}, "/Auth", authName); err != nil {
 		t.Fatal(err)
 	}
 	own(t, ac, authName)
-	router := bus.Conn(t)
-	own(t, router, routerName)
-
+	routerOwner := bus.Conn(t)
+	own(t, routerOwner, routerName)
+	routerShared := bus.Conn(t) // the router's other connection: no name, same user
+	spoofer := bus.Conn(t)
+	const routerUID, otherUID = 16970, 999
+	uidOf := map[string]int{
+		routerOwner.Names()[0]:  routerUID,
+		routerShared.Names()[0]: routerUID,
+		spoofer.Names()[0]:      otherUID,
+	}
+	var lookups sync.Map
 	got := make(chan []byte, 8)
 	up := make(chan bool, 8)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go (&Monitor{Dial: privateDial(bus), Deliver: func(b []byte) { got <- b }, SetUp: func(v bool) { up <- v },
-		Log: log.New(io.Discard, "", 0)}).Run(ctx)
+		Log: log.New(io.Discard, "", 0), TrustUID: routerUID,
+		SenderUID: func(s string) (int, error) {
+			n, _ := lookups.LoadOrStore(s, new(int))
+			*n.(*int)++
+			if uid, ok := uidOf[s]; ok {
+				return uid, nil
+			}
+			return -1, errors.New("unknown sender")
+		}}).Run(ctx)
 	if !<-up {
 		t.Fatal("monitor down")
 	}
@@ -220,18 +239,16 @@ func TestMonitorBelievesOnlyTheRouter(t *testing.T) {
 			t.Fatalf("%s: nothing delivered", what)
 		}
 	}
-	spoofer := bus.Conn(t)
 	send(spoofer, []byte{0xBA, 0xD0})
-	send(router, []byte{1})
-	expect([]byte{1}, "the router's reply") // the spoof (sent first) was not delivered
-
-	// The router restarts as another connection.
-	router.Close()
-	router2 := bus.Conn(t)
-	own(t, router2, routerName)
-	time.Sleep(100 * time.Millisecond) // NameOwnerChanged reaches the monitor
-	send(router2, []byte{2})
-	expect([]byte{2}, "the restarted router's reply")
+	send(routerShared, []byte{1})
+	expect([]byte{1}, "the router's reply from its shared connection") // the spoof (first) was dropped
+	send(routerOwner, []byte{2})
+	expect([]byte{2}, "the router's reply from its name's connection")
+	send(routerShared, []byte{3})
+	expect([]byte{3}, "a second reply")
+	if n, _ := lookups.Load(routerShared.Names()[0]); *n.(*int) != 1 {
+		t.Fatalf("the sender was looked up %d times, want once (cached)", *n.(*int))
+	}
 }
 
 // The injector child redials when its bus connection drops.

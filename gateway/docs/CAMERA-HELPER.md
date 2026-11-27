@@ -231,8 +231,9 @@ command-router and the router's replies back; agw's VCMD capability is its only 
 
 - **In:** a long-lived child, `camhelper cmd-inject`, started as the `-inject-user` (default `authd`, looked up in
   `/etc/passwd`), calls `com.tesla.CommandRouter.RouteFromAuthd(ay)`. The D-Bus policy lets only authd call it.
-- **Out:** a root D-Bus monitor (`BecomeMonitor`) on `com.tesla.Auth.RouteMessageBytes`; authd logs and drops the
-  same replies. Nothing reaches Tesla's servers.
+- **Out:** a root D-Bus monitor (`BecomeMonitor`) on `com.tesla.Auth.RouteMessageBytes`, believing only senders
+  running as `-router-user` (default `command-router`); authd logs and drops the same replies. Nothing reaches
+  Tesla's servers.
 - **Never fatal:** no injector user, no socket or no bus only logs "Direct commands off" or "monitor down".
   Camera, talk, dashcam and sign-in are never affected.
 
