@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "io.github.ivan-prodanov.direct-link",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "sdk": ">=1.0 <2",
   "title": "Direct Link",
   "summary": "Live camera, talk through the car's speaker, dashcam clips and your phone's car commands, straight from the car over your own Tailscale. Pair by scanning the QR in its panel. Needs the companion app and CoilShift's Tailscale. Runs runit and an iptables chain.",
@@ -21,8 +21,8 @@
   },
   "payloads": [
     {
-      "path": "payload/direct-link-d5024a9.sqfs",
-      "sha256": "d0295dffd13424deca8a2e7a01d59f0ec6d4ac4ba1865aa85916765a3b548695",
+      "path": "payload/direct-link-91d29b1.sqfs",
+      "sha256": "aca399aa99382cbafa415621b6648f8999cdd99344445e6bf612583b34cdbb98",
       "size": 9986048
     }
   ],
