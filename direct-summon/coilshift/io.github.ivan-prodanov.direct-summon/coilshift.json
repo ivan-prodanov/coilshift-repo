@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "io.github.ivan-prodanov.direct-summon",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "sdk": ">=1.0 <2",
   "title": "Direct Summon",
   "summary": "Summon from your phone via Direct Link, without Tesla's servers; the car moves only on your phone's command. Stops Tesla's WebRTC service while installed (sv down, its orphaned jail killed by pidfile): Tesla-app Summon and live camera are off. Runs runit (runsvdir, sv).",
@@ -12,8 +12,8 @@
   ],
   "payloads": [
     {
-      "path": "payload/direct-summon-80b14ad.sqfs",
-      "sha256": "48f3e62e60e9ab6d7f191fd3eba89026fc7ca61f61627a9acdfe2724d421a58b",
+      "path": "payload/direct-summon-d04b446.sqfs",
+      "sha256": "1bf67649743749d22b673baaba35aefa6d6b64336daeb77d50ba9ae7f1597e1e",
       "size": 4923392
     }
   ],
