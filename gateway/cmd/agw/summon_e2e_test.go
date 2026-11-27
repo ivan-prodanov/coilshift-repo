@@ -143,8 +143,16 @@ func summonHappyPath(t *testing.T, r *summonRig) {
 	}
 }
 
+// The e2e bounds derive from D2's constants: a trip reaches the car within TripAfter + 300 ms of the last LIVE that
+// got through, and a late link's within Fresh + TripAfter + 250 ms of the delay starting (the newest tick the phone
+// echoes goes stale after Fresh, and the trip comes TripAfter later).
+const (
+	smTripBound = summon.TripAfter + 300*time.Millisecond
+	smLateBound = summon.Fresh + summon.TripAfter + 250*time.Millisecond
+)
+
 // TestSummonLostFramesTrip: the phone stops sending LIVE and HB while a verb is active. D2 injects exactly one abort
-// within 600 ms of the last LIVE sent; its cmd_result is swallowed, and the session goes on.
+// within TripAfter + 300 ms of the last LIVE sent; its cmd_result is swallowed, and the session goes on.
 func TestSummonLostFramesTrip(t *testing.T) {
 	r := startSummonRig(t, summonOpts{})
 	p := r.phone()
@@ -155,8 +163,8 @@ func TestSummonLostFramesTrip(t *testing.T) {
 	abort := r.waitCarAfterVerb(smForward, smAbort, smWait)
 	lat := abort.At.Sub(last)
 	t.Logf("D2 trip (lost frames): the injected abort reached the car %v after the last LIVE sent", lat)
-	if lat > 600*time.Millisecond {
-		t.Fatalf("the injected abort reached the car %v after the last LIVE sent, want within 600 ms", lat)
+	if lat > smTripBound {
+		t.Fatalf("the injected abort reached the car %v after the last LIVE sent, want within %v", lat, smTripBound)
 	}
 
 	// The car answers the abort. The helper swallows that answer, so the phone never sees it.
@@ -179,7 +187,7 @@ func TestSummonLostFramesTrip(t *testing.T) {
 }
 
 // TestSummonStalledLinkTrips: the delay proxy holds every byte both ways while the phone keeps holding. An abort
-// reaches the car within 600 ms of the last LIVE that got through, and it is D2's: one trip logged, no disconnect, the
+// reaches the car within TripAfter + 300 ms of the last LIVE that got through, and it is D2's: one trip logged, no disconnect, the
 // session still up. Then the link comes back with the finger still down: the held burst arrives, then about 300 ms of
 // fresh LIVE and HB, and no heartbeat is forwarded after the abort, since D2 forwards none until the next forwarded
 // verb.
@@ -201,7 +209,7 @@ func TestSummonStalledLinkTrips(t *testing.T) {
 	abort := r.waitCarAfterVerb(smForward, smAbort, smWait)
 	lat := abort.At.Sub(last)
 	t.Logf("D2 trip (stalled link): the injected abort reached the car %v after the last LIVE that got through", lat)
-	smWantTrip(t, lat, 600*time.Millisecond, "the last LIVE that got through")
+	smWantTrip(t, lat, smTripBound, "the last LIVE that got through")
 	time.Sleep(700 * time.Millisecond) // the stall goes on, and the phone keeps sending into it
 	r.wantOneTrip()
 	if n := smCount(r.car.Received(), smDisconnect); n != 0 {
@@ -224,7 +232,7 @@ func TestSummonStalledLinkTrips(t *testing.T) {
 
 // TestSummonLateLinkTrips is the case freshness exists for: the link delays only Pi→phone by 2 s, and the phone keeps
 // sending LIVE and HB at their usual rate. They arrive on time, but echo old tick ids, so they are stale. Exactly one
-// abort reaches the car within 700 ms of the delay starting, no heartbeat is forwarded after it, and a later re-press
+// abort reaches the car within Fresh + TripAfter + 250 ms of the delay starting, no heartbeat is forwarded after it, and a later re-press
 // is refused with action_invalid. No stale heartbeat is forwarded before the trip either: none reaches the car later
 // than F after the delay started, plus 100 ms for the helper's forwarding.
 func TestSummonLateLinkTrips(t *testing.T) {
@@ -238,8 +246,8 @@ func TestSummonLateLinkTrips(t *testing.T) {
 	abort := r.waitCarAfterVerb(smForward, smAbort, smWait)
 	lat := abort.At.Sub(t0)
 	t.Logf("D2 trip (late link): the injected abort reached the car %v after the delay started", lat)
-	if lat > 700*time.Millisecond {
-		t.Fatalf("the abort reached the car %v after the delay started, want within 700 ms", lat)
+	if lat > smLateBound {
+		t.Fatalf("the abort reached the car %v after the delay started, want within %v", lat, smLateBound)
 	}
 	time.Sleep(600 * time.Millisecond) // the phone keeps sending, on time and stale
 	since := time.Since(t0)
@@ -273,21 +281,22 @@ func TestSummonLateLinkTrips(t *testing.T) {
 	}
 }
 
-// TestSummonLateLink220msTrips: a 220 ms Pi→phone late link. Every tick the phone echoes is then at least 220 ms old at
-// the helper, over F = 150 ms, so the hold must trip, within 700 ms of the delay starting as in
-// TestSummonLateLinkTrips. That test's 2 s delay cannot tell F = 150 ms from F = 400 ms; this one can.
-func TestSummonLateLink220msTrips(t *testing.T) {
+// TestSummonLateLinkJustOverFreshTrips: a Pi→phone late link of Fresh + 70 ms. Every tick the phone echoes is then at
+// least that old at the helper, over F = Fresh, so the hold must trip, within Fresh + TripAfter + 250 ms of the delay
+// starting as in TestSummonLateLinkTrips. That test's 2 s delay cannot tell F = Fresh from a far larger F; this one
+// can.
+func TestSummonLateLinkJustOverFreshTrips(t *testing.T) {
 	r := startSummonRig(t, summonOpts{})
 	p := r.phone()
 	p.hold(smCmdArrow(smForward, 11))
 	time.Sleep(300 * time.Millisecond)
 
-	t0 := r.proxy.setDelay(0, 220*time.Millisecond)
+	t0 := r.proxy.setDelay(0, summon.Fresh+70*time.Millisecond)
 	abort := r.waitCarAfterVerb(smForward, smAbort, smWait)
 	lat := abort.At.Sub(t0)
-	t.Logf("D2 trip (220 ms late link): the injected abort reached the car %v after the delay started", lat)
-	if lat > 700*time.Millisecond {
-		t.Fatalf("the abort reached the car %v after the delay started, want within 700 ms", lat)
+	t.Logf("D2 trip (late link just over Fresh): the injected abort reached the car %v after the delay started", lat)
+	if lat > smLateBound {
+		t.Fatalf("the abort reached the car %v after the delay started, want within %v", lat, smLateBound)
 	}
 	time.Sleep(300 * time.Millisecond) // a second trip, or a second abort, would be here by now
 	r.wantOneTrip()

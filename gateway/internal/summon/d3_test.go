@@ -453,12 +453,12 @@ func TestFloorRunsAfterD2(t *testing.T) {
 	t.Run("a stale tick from 1 m", func(t *testing.T) {
 		r := startRig(t)
 		lat, lon := nearCar(t, 0, 1)
-		r.e.Verb(verbAt(t, forwardType, lat, lon), 151*time.Millisecond, true, 1)
+		r.e.Verb(verbAt(t, forwardType, lat, lon), staleAge, true, 1)
 		refusedOnce(t, r, forwardType, "action_invalid")
 	})
 	t.Run("a stale tick with no car position", func(t *testing.T) {
 		r := startRigNoLocation(t)
-		r.e.Verb(verb10m(t, forwardType), 151*time.Millisecond, true, 1)
+		r.e.Verb(verb10m(t, forwardType), staleAge, true, 1)
 		refusedOnce(t, r, forwardType, "action_invalid")
 	})
 	t.Run("from 1 m while a verb is active", func(t *testing.T) {
@@ -620,21 +620,23 @@ func TestStaleCarriesAcrossFrozenHolds(t *testing.T) {
 }
 
 func TestStaleCarriesAcrossTrips(t *testing.T) {
-	// D2's trip ends a hold as the release does, and adds its frameless time: 301 ms per hold here, with no LIVE after
-	// the press. The phone's own release after the trip adds nothing.
+	// D2's trip ends a hold as the release does, and adds its frameless time: TripAfter + 1 ms per hold here, with no LIVE
+	// after the press. The phone's own release after the trip adds nothing. fit trips stay within StaleAfter, one more
+	// goes over it.
+	fit := int(staleMS / (tripMS + 1))
 	cases := []struct {
 		trips int
 		stale bool
-	}{{3, false}, {4, true}}
+	}{{fit, false}, {fit + 1, true}}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("%d trips", c.trips), func(t *testing.T) {
 			r := startRig(t)
 			for range c.trips {
 				r.pressForwarded(t, verb10m(t, forwardType))
-				r.idle(300)
+				r.idle(tripMS)
 				r.step(1) // the trip
 				if r.e.VerbActive() {
-					t.Fatal("no trip 301 ms after the press")
+					t.Fatal("no trip TripAfter + 1 ms after the press")
 				}
 				r.release(t)
 				r.idle(500)
@@ -665,8 +667,8 @@ func TestStaleCarryResetByCarFrame(t *testing.T) {
 		r := startRig(t)
 		for range 4 {
 			r.pressForwarded(t, verb10m(t, forwardType))
-			r.idle(300)
-			r.step(1) // the trip injects an abort: 301 ms carried
+			r.idle(tripMS)
+			r.step(1) // the trip injects an abort: TripAfter + 1 ms carried
 			// The car answers the injected abort: swallowed, but still a car frame. Its answer to the phone's own
 			// abort has not come yet.
 			r.e.CarFrame(carlink.ChannelTCP, resultJSON(abortType, true, "", wallMS))
@@ -781,7 +783,7 @@ func TestStaleStaysUntilLocation(t *testing.T) {
 	r.e.Msg(infoMsg(t))
 	r.e.Live(0, false)
 	r.phone.reset()
-	r.e.Verb(verb10m(t, findMeType), 151*time.Millisecond, true, 3) // a late tick: D2 refuses it
+	r.e.Verb(verb10m(t, findMeType), staleAge, true, 3) // a late tick: D2 refuses it
 	got := r.phone.got()
 	if len(got) != 1 {
 		t.Fatalf("phone got %v, want D2's refusal", got)

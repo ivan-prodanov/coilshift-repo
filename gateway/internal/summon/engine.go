@@ -15,8 +15,8 @@ import (
 
 // D2's timing values (design §5.2, §6.2) and the CAR frame's channel bytes.
 const (
-	Fresh        = 150 * time.Millisecond // F: a tick age at or under this is fresh
-	TripAfter    = 300 * time.Millisecond // verbActive and no liveness instant for longer than this: the trip
+	Fresh        = 500 * time.Millisecond // F: a tick age at or under this is fresh (owner 2026-11-27: was 150 ms; the car's LTE round trip is 109-442 ms)
+	TripAfter    = 800 * time.Millisecond // verbActive and no liveness instant for longer than this: the trip (owner 2026-11-27: was 300 ms)
 	ChanTCP      = byte(0)                // CAR channel byte for dcTcp
 	ChanUDP      = byte(1)                // CAR channel byte for dcUdp
 	LinkSetAge   = 100 * time.Millisecond // LinkSetRun LIVE ages in a row over this set the link flag

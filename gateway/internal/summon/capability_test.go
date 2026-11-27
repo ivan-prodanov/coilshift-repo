@@ -812,8 +812,8 @@ func testRealClockTrip(t *testing.T, params json.RawMessage) {
 	}
 	select {
 	case at := <-abortAt:
-		if d := at.Sub(last); d < 300*time.Millisecond || d > 350*time.Millisecond {
-			t.Fatalf("the injected abort reached the car %v after the last fresh LIVE, want 300-350 ms", d)
+		if d := at.Sub(last); d < TripAfter || d > TripAfter+50*time.Millisecond {
+			t.Fatalf("the injected abort reached the car %v after the last fresh LIVE, want TripAfter (%v) to +50 ms", d, TripAfter)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no injected abort within 2 s of the last fresh LIVE")
@@ -832,13 +832,13 @@ func testTickAgePassedThrough(t *testing.T, params json.RawMessage) {
 		// Each case ends with the phone's abort, so a refusal is for staleness, never for an active verb (R12).
 		s.verb(t, m, 0, false) // unknown tick
 		s.msg(t, abortMsg(t))
-		s.verb(t, m, Fresh, true) // 150 ms
+		s.verb(t, m, Fresh, true) // exactly Fresh
 		s.msg(t, abortMsg(t))
-		s.verb(t, m, Fresh+time.Millisecond, true) // 151 ms
+		s.verb(t, m, staleAge, true) // just over Fresh
 		s.msg(t, abortMsg(t))
 		want := []string{AbortJSON, string(m.Canonical), AbortJSON, AbortJSON}
 		if got := r.car.sends(); !slices.Equal(got, want) {
-			t.Fatalf("the car got %q, want %q: only the 150 ms verb goes through", got, want)
+			t.Fatalf("the car got %q, want %q: only the verb at exactly Fresh goes through", got, want)
 		}
 		cars := w.Sent(TypeCar)
 		if len(cars) != 3 {
@@ -859,19 +859,19 @@ func testTickAgePassedThrough(t *testing.T, params json.RawMessage) {
 		r.step(100)
 		s.live(t, 0, false)
 		r.step(50)
-		s.hb(t, hbm, Fresh+time.Millisecond, true)
+		s.hb(t, hbm, staleAge, true)
 		r.step(50)
-		s.live(t, Fresh+time.Millisecond, true)
+		s.live(t, staleAge, true)
 		r.step(50)
 		s.hb(t, hbm, 0, false)
-		r.step(50) // 300 ms
+		r.step(tripMS - 250) // TripAfter
 		if n := r.car.count(AbortJSON); n != 0 {
-			t.Fatalf("%d aborts 300 ms after the last fresh frame, want none yet", n)
+			t.Fatalf("%d aborts TripAfter after the last fresh frame, want none yet", n)
 		}
-		r.step(1) // 301 ms
+		r.step(1) // TripAfter + 1 ms
 		want := []string{string(m.Canonical), AbortJSON}
 		if got := r.car.sends(); !slices.Equal(got, want) {
-			t.Fatalf("the car got %q, want %q: the trip 301 ms after the verb, and no stale HB", got, want)
+			t.Fatalf("the car got %q, want %q: the trip TripAfter + 1 ms after the verb, and no stale HB", got, want)
 		}
 	})
 	t.Run("fresh LIVE and HB stamp liveness", func(t *testing.T) {
@@ -884,7 +884,7 @@ func testTickAgePassedThrough(t *testing.T, params json.RawMessage) {
 		r.step(101) // 101 ms after the fresh LIVE
 		r.step(99)
 		s.hb(t, hbm, Fresh, true)
-		r.step(300) // 300 ms after the fresh HB
+		r.step(tripMS) // TripAfter after the fresh HB
 		if n := r.car.count(AbortJSON); n != 0 {
 			t.Fatalf("%d aborts while fresh LIVE and HB frames came, want none", n)
 		}
@@ -1178,7 +1178,7 @@ func TestPresenceExpiryTearsDown(t *testing.T) {
 			t.Fatalf("log lines %q: want H4's line with the reason lease", r.lines())
 		}
 	})
-	// R9: a verb was held with fresh LIVEs, which then stopped. D2 injected its abort 300 ms later and ended the hold,
+	// R9: a verb was held with fresh LIVEs, which then stopped. D2 injected its abort TripAfter later and ended the hold,
 	// so the lease's H4 sends no second abort.
 	t.Run("a verb was held", func(t *testing.T) {
 		r := newCapRig(t, clock.NewFake())
@@ -1191,15 +1191,15 @@ func TestPresenceExpiryTearsDown(t *testing.T) {
 			r.step(100)
 			s.live(t, 0, true)
 		}
-		r.step(300)
+		r.step(tripMS)
 		if n := r.car.count(AbortJSON); n != 0 {
-			t.Fatalf("%d aborts 300 ms after the last LIVE, want none yet", n)
+			t.Fatalf("%d aborts TripAfter after the last LIVE, want none yet", n)
 		}
 		r.step(1)
 		if n := r.car.count(AbortJSON); n != 1 {
-			t.Fatalf("%d aborts 301 ms after the last LIVE, want D2's one", n)
+			t.Fatalf("%d aborts TripAfter + 1 ms after the last LIVE, want D2's one", n)
 		}
-		r.step(10000 - 301)
+		r.step(10000 - (tripMS + 1))
 		assertOpen(t, w, "10000 ms after the last LIVE")
 		r.step(1)
 		assertLease(t, w, "10001 ms after the last LIVE")
@@ -1669,7 +1669,7 @@ func TestLoopStampsBeforeLock(t *testing.T) {
 			}
 		})
 
-		s.verb(t, verb10m(t, forwardType), 0, true) // no LIVE follows: the loop trips 300 ms later
+		s.verb(t, verb10m(t, forwardType), 0, true) // no LIVE follows: the loop trips TripAfter later
 		select {
 		case <-stuck:
 		case <-time.After(2 * time.Second):
@@ -1714,7 +1714,7 @@ func TestLoopStampsBeforeLock(t *testing.T) {
 		})
 		s := r.openSeeded(t, testkit.NewFakeWindow())
 		s.verb(t, verb10m(t, forwardType), 0, true)
-		r.fake.Advance(301) // the next pass trips
+		r.fake.Advance(tripMS + 1) // the next pass trips
 		passed := make(chan struct{})
 		go func() {
 			defer close(passed)

@@ -1753,7 +1753,7 @@ func TestWedgedEngineFailsLiveness(t *testing.T) {
 	}
 
 	w.armed.Store(true) // the next Send blocks under the engine lock
-	p.stopLive()        // D2 trips 300 ms later, and its abort's Send wedges the D2 loop inside Tick
+	p.stopLive()        // D2 trips TripAfter later, and its abort's Send wedges the D2 loop inside Tick
 	start := time.Now()
 	eventually(t, "the liveness gate false with the engine wedged", func() bool { return !gate() })
 	if took := time.Since(start); took < summon.TripAfter {

@@ -170,13 +170,14 @@ abort or a `device_location`.
 ### D2, the deadman, and its bounds
 
 - **Freshness.** LIVE, VERB and HB carry the newest tick id the phone has. A frame is fresh when its tick was issued
-  in this session at most F = 150 ms before it arrived (`Window.TickAge`, on the helper's BOOTTIME clock).
+  in this session at most F = 500 ms (`summon.Fresh`; was 150 ms) before it arrived (`Window.TickAge`, on the helper's BOOTTIME clock).
 - **Liveness instants** are fresh LIVE and HB frames and forwarded verbs. **The trip:** while a verb is active and
-  more than 300 ms have passed since the latest one, the helper injects `cmd_abort`. It swallows that abort's
+  more than 800 ms (`summon.TripAfter`; was 300 ms) have passed since the latest one, the helper injects `cmd_abort`. It swallows that abort's
   `cmd_result`, keeps the session, and forwards no HB until the next forwarded verb. The D2 loop runs every 10 ms.
-  So on a lost or stalled link the abort goes out about 300 ms after the last fresh frame arrived: at most
-  F + 300 ms plus one 10 ms loop period (about 460 ms) after that frame's tick was issued. Design §5.2 rounds this to
-  450 ms; the bench measured trips 301-310 ms after the last liveness instant.
+  So on a lost or stalled link the abort goes out about 800 ms after the last fresh frame arrived: at most
+  F + 800 ms plus one 10 ms loop period (about 1310 ms) after that frame's tick was issued. Design §5.2 rounds this to
+  450 ms at the old 150/300 ms values; the bench measured trips 301-310 ms after the last liveness instant at those
+  values.
 - **Refusals:** a stale verb, or a verb while one is active, gets `action_invalid`.
 - **The link flag:** 3 LIVE tick ages in a row over 100 ms set it; the end of a hold, or 2 s of ages at or under
   75 ms, clear it. agw passes it to `Host().SetSummonLinkDegraded`, and CAMERA then sends keyframes only.
@@ -222,7 +223,7 @@ abort or a `device_location`.
     10 s from the issue time of the newest tick stamped: an echo agw held more than 3 s stamps nothing, and one it
     released sooner stamps its tick's issue time, not its arrival, so holding frames back gains agw nothing more. A
     phone that has not opted in can still be kept up about 20 s per held frame, but its session has no live file, so
-    that stretch never reaches SUMMON mode. Neither moves the car: every verb still needs a tick echo at most 150 ms
+    that stretch never reaches SUMMON mode. Neither moves the car: every verb still needs a tick echo at most F = 500 ms
     old.
   - **An idle phone stays up:** the phone sends PRESENCE about once a second whether or not a control is held, so it
     is dropped only once more than 10 s have passed since the issue of the newest tick it echoed at most 3 s old.
@@ -1083,7 +1084,7 @@ and `--after-boot` stops it again. Once the reports are read and noted, remove t
 
 - **The round trip with the camera running** (design §8, check 4; Appendix A §9 row 6; plan call 10). It needs a
   signed-in phone on the real path, so it runs once the phone link exists (the phone plan). Until then nothing
-  measures the phone-to-helper round trip against F = 150 ms.
+  measures the phone-to-helper round trip against F = 500 ms.
 - **The swallow assumption.** After D2's trip the helper swallows one car `cmd_result` per injected abort. That
   assumes QtCarServer answers every `cmd_abort` with exactly one `cmd_result` (Appendix A §8.2), which has not been
   seen on this car; check 4 sends no abort. If it does not, the phone's next abort result could be swallowed: a UX
