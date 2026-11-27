@@ -123,7 +123,10 @@ The keys are unchanged, so the phone needs nothing. The old binaries in
 **Known (1.1.0):** an in-place update kept the previous build's binary bind
 (`/run/direct-link-bin` still showed the old image), so agw ran the old binary against the new
 run script. A car reboot clears it (`/run` starts empty, and apply binds afresh). From 1.1.1 the
-apply drops and re-makes a stale bind itself and checks the bound binaries.
+apply drops and re-makes a stale bind itself and checks the bound binaries. Also from 1.1.1 the
+supervisor re-checks the egress lock every 10 s and moves its jump back to the top of OUTPUT when
+Tesla's firewall has put a rule above it (seen after a reboot: the CarPlay access point's
+`-s 192.168.22.2 -o wlan1 -j ACCEPT`); CoilShift's log then says "egress lock restored".
 
 ## Update from 1.0.x to direct mode
 

@@ -118,6 +118,26 @@ before=$(cat "$er/.fakes/state/iptables.rules")
 if lock && [ "$(cat "$er/.fakes/state/iptables.rules")" = "$before" ]; then ok "egress lock: a second apply changes nothing"
 else bad "egress lock is not idempotent"; fi
 
+# Tesla's firewall puts a rule above the jump: egress_keep moves the jump back to the top, once.
+printf '%s\n' '-A OUTPUT -s 192.168.22.2/32 -o wlan1 -j ACCEPT' >"$er/.fakes/state/iptables.rules.top"
+cat "$er/.fakes/state/iptables.rules.top" "$er/.fakes/state/iptables.rules" >"$er/.fakes/state/iptables.rules.n"
+mv "$er/.fakes/state/iptables.rules.n" "$er/.fakes/state/iptables.rules"; rm -f "$er/.fakes/state/iptables.rules.top"
+keep() {
+    ( CSDK_FAKE_ROOT=$er CSDK_RUN=$work/run CSDK_PKG=test; export CSDK_FAKE_ROOT CSDK_RUN
+      # shellcheck source=/dev/null
+      . "$DL/lib/common.sh"
+      egress_lock "$IP6T" >/dev/null 2>&1 # apply's IPv6 half, so only the IPv4 jump is out of place
+      egress_keep )
+}
+first=$(grep '^-A OUTPUT' "$er/.fakes/state/iptables.rules" | head -n 1)
+r1=$(keep); r2=$(keep)
+if [ "$first" != '-A OUTPUT -m owner --uid-owner 4950 -j AIRGAPP_GW_OUT' ] && [ "$r1" = restored ] && [ -z "$r2" ] &&
+   [ "$(grep '^-A OUTPUT' "$er/.fakes/state/iptables.rules" | head -n 1)" = '-A OUTPUT -m owner --uid-owner 4950 -j AIRGAPP_GW_OUT' ] &&
+   [ "$(grep -c 'AIRGAPP_GW_OUT$' "$er/.fakes/state/iptables.rules")" = 1 ] &&
+   grep -qx -- '-A OUTPUT -s 192.168.22.2/32 -o wlan1 -j ACCEPT' "$er/.fakes/state/iptables.rules"; then
+    ok "egress keep: the jump goes back to the top once; Tesla's rule stays"
+else bad "egress keep (r1=$r1 r2=$r2)"; sed 's/^/     /' "$er/.fakes/state/iptables.rules"; fi
+
 # ---- 1c. the panel's pairing address (fakes only) ----
 pr=$work/panelroot
 mkdir -p "$pr/.fakes/state" "$work/prun"

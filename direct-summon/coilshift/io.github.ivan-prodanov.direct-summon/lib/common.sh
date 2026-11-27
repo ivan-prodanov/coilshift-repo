@@ -210,6 +210,21 @@ egress_lock() {
     egress_chain_ok "$1" "${2:-}" && egress_jump_first "$1"
 }
 
+# egress_keep: Direct Link's supervisor, every 10 s. Tesla's own firewall can insert a rule
+# above our jump after apply (seen: the CarPlay access point's `-s 192.168.22.2 -o wlan1 -j
+# ACCEPT`, when it comes up), and a rule above the jump is one uid 4950 could pass. When the
+# chain or the jump is not as apply left it, egress_lock puts it back (idempotent; a busy
+# xtables lock just fails this round). Prints "restored" when it changed something.
+egress_keep() {
+    if egress_chain_ok "$IPT" "$(egress_accept_rule)" && egress_jump_first "$IPT" \
+        && egress_chain_ok "$IP6T" && egress_jump_first "$IP6T"; then
+        return 0
+    fi
+    egress_lock "$IPT" "$(egress_accept_rule)" >/dev/null 2>&1 && egress_lock "$IP6T" >/dev/null 2>&1 \
+        && echo restored
+    return 0
+}
+
 # egress_unlock IPTABLES: every jump to the chain out of OUTPUT, then the chain itself.
 egress_unlock() {
     # shellcheck disable=SC2086
