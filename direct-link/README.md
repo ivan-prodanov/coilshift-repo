@@ -120,6 +120,11 @@ The keys are unchanged, so the phone needs nothing. The old binaries in
 - `tail -n 3 /var/lib/airgapp-gw/svlog/agw/current`: "bus self-test passed", "listening on the tailnet at".
 - `ss -ltn | grep -c ':17100 '`: 1 (the tailnet address only).
 
+**Known (1.1.0):** an in-place update kept the previous build's binary bind
+(`/run/direct-link-bin` still showed the old image), so agw ran the old binary against the new
+run script. A car reboot clears it (`/run` starts empty, and apply binds afresh). From 1.1.1 the
+apply drops and re-makes a stale bind itself and checks the bound binaries.
+
 ## Update from 1.0.x to direct mode
 
 Car parked, no Summon session open. In CoilShift, update Direct Link to 1.1.0, then Direct Summon

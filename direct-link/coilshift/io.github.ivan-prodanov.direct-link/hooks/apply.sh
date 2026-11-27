@@ -52,6 +52,24 @@ csdk_api PUT /images/direct-link "{\"payload\":\"payload/direct-link-$GW_BUILD.s
     || fail "the image's binaries are not build $GW_BUILD"
 csdk_api PUT /binds/direct-link-bin "{\"source\":\"$img\",\"target\":\"$DL_BIN\"}" >/dev/null \
     || fail "cannot bind the binaries at $DL_BIN"
+# An update keeps the previous build's bind: CoilShift treats a PUT of the same name, source and
+# target as done, so the bind still shows the old image's files (seen on 1.0.0 -> 1.1.0). Drop it
+# and bind again, with agw and camhelper down meanwhile (they run from it), then check the bound
+# binaries themselves. A bind that will not let go is cleared by a reboot (/run starts empty).
+rebound=0
+if [ -e "$R$DL_BIN/BUILD" ] && [ "$(sed -n 's/^build //p' "$R$DL_BIN/BUILD" 2>/dev/null | head -n 1)" != "$GW_BUILD" ]; then
+    for svc in camhelper agw; do
+        [ -d "$SVROOT/$svc" ] && { do_sv -w 15 down "$SVROOT/$svc" >/dev/null 2>&1 || true; }
+    done
+    csdk_api DELETE /binds/direct-link-bin >/dev/null 2>&1 \
+        && csdk_api PUT /binds/direct-link-bin "{\"source\":\"$img\",\"target\":\"$DL_BIN\"}" >/dev/null \
+        || fail "the previous build's bind at $DL_BIN did not let go: reboot the car"
+    rebound=1
+fi
+if [ -e "$R$AGW_BIN" ]; then
+    [ "$(sha256_of "$R$AGW_BIN")" = "$AGW_SHA256" ] && [ "$(sha256_of "$R$HELPER_BIN")" = "$CAMHELPER_SHA256" ] \
+        || fail "the binaries at $DL_BIN are not build $GW_BUILD: reboot the car"
+fi
 do_chpst -u "$RUN_AS" test -x "$AGW_BIN" || fail "uid $UID_GW cannot run $AGW_BIN"
 
 # 3. first run (install-car.sh steps 1, 3 and 4)
@@ -88,6 +106,12 @@ write_service camhelper "$HELPER_RUN" "$HELPER_FINISH" "$HELPER_LOG" "Direct Lin
 csdk_api PUT /binds/direct-link-sv "{\"source\":\"$SVROOT\",\"target\":\"$DL_SV\"}" >/dev/null \
     || notes="${notes:+$notes; }no /run/direct-link-sv bind (use $SVROOT)"
 restart_changed camhelper agw
+# Back up after a rebind (restart_changed only restarts what is up).
+if [ "$rebound" = 1 ]; then
+    for svc in camhelper agw; do
+        [ -d "$SVROOT/$svc" ] && { do_sv up "$SVROOT/$svc" >/dev/null 2>&1 || true; }
+    done
+fi
 
 # The panel's pairing QR (the supervisor keeps it current from here on).
 publish_car_host || true
