@@ -118,6 +118,29 @@ before=$(cat "$er/.fakes/state/iptables.rules")
 if lock && [ "$(cat "$er/.fakes/state/iptables.rules")" = "$before" ]; then ok "egress lock: a second apply changes nothing"
 else bad "egress lock is not idempotent"; fi
 
+# ---- 1c. the panel's pairing address (fakes only) ----
+pr=$work/panelroot
+mkdir -p "$pr/.fakes/state" "$work/prun"
+cp "$here"/fakes/* "$pr/.fakes/"
+pub() {
+    ( CSDK_FAKE_ROOT=$pr CSDK_RUN=$work/prun CSDK_PKG=test; export CSDK_FAKE_ROOT CSDK_RUN
+      # shellcheck source=/dev/null
+      . "$DL/lib/common.sh"
+      publish_car_host )
+    cat "$work/prun/panel/car-host.txt" 2>/dev/null || true
+}
+printf '%s\n' '7: tailscale0    inet 100.100.1.1/32 scope global tailscale0\       valid_lft forever preferred_lft forever' \
+    >"$pr/.fakes/state/ip.tailscale0"
+[ "$(pub)" = 100.100.1.1 ] && ok "panel: the tailnet address is published" || bad "panel: address not published"
+[ "$(pub)" = 100.100.1.1 ] && ok "panel: an unchanged address stays" || bad "panel: unchanged address"
+printf '%s\n' '7: tailscale0    inet 100.128.0.1/32 scope global tailscale0' >"$pr/.fakes/state/ip.tailscale0"
+[ -z "$(pub)" ] && ok "panel: an address outside the tailnet range is not published" || bad "panel: out-of-range address published"
+: >"$pr/.fakes/state/ip.tailscale0"
+pub >/dev/null; printf '%s\n' '7: tailscale0    inet 100.101.1.1/32 scope global tailscale0' >"$pr/.fakes/state/ip.tailscale0"
+[ "$(pub)" = 100.101.1.1 ] && ok "panel: a new address replaces it" || bad "panel: new address"
+rm -f "$pr/.fakes/state/ip.tailscale0"
+[ -z "$(pub)" ] && ok "panel: no tailscale0, no address" || bad "panel: stale address kept without tailscale0"
+
 # ---- 2. shared files ----
 for f in lib/common.sh lib/csdk.sh lib/gateway.sh bin/supervise.sh; do
     if cmp -s "$DL/$f" "$DS/$f"; then ok "shared $f"; else bad "shared $f differs (run direct-link/sync.sh)"; fi

@@ -4,12 +4,18 @@
   "version": "1.1.0",
   "sdk": ">=1.0 <2",
   "title": "Direct Link",
-  "summary": "Live camera, talk through the car's speaker and dashcam clips on your phone, straight from the car over your own Tailscale. Needs the companion app and CoilShift's Tailscale. Runs runit (runsvdir, sv) and an iptables owner chain: the gateway only answers the phone.",
+  "summary": "Live camera, talk through the car's speaker and dashcam clips on your phone, straight from the car over your own Tailscale. Pair by scanning the QR in its panel. Needs the companion app and CoilShift's Tailscale. Runs runit and an iptables chain: the gateway only answers.",
   "capabilities": [
     "service",
     "image.mount",
-    "bind"
+    "bind",
+    "panel"
   ],
+  "panel": {
+    "entry": "panel/index.html",
+    "title": "Direct Link",
+    "permissions": ["data", "status"]
+  },
   "payloads": [
     {
       "path": "payload/direct-link-80b14ad.sqfs",

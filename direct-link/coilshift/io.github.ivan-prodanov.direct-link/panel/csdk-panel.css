@@ -1,0 +1,54 @@
+/* The touchscreen's palette and controls for a panel: night by default, day while <html data-theme="light"> (set by
+   csdk-panel.js from the bridge's theme). Vendor this file byte for byte. */
+:root {
+  --bg: #161616;
+  --raised: #1f1f1f;
+  --fill: #282828;
+  --seg-on: #575757;
+  --line: #2f2f2f;
+  --text: #e8e8e8;
+  --text-2: #a2a2a2;
+  --blue: #3e6be2;
+  --green: #34c759;
+  --red: #ff3a3a;
+  --orange: #ff9f0a;
+  --radius: 6px;
+  --font: var(--font-normal, "Universal Sans"), "Universal Sans Text", "Helvetica Neue", Arial, sans-serif;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #ededef;
+  --raised: #ffffff;
+  --fill: #dadadc;
+  --seg-on: #b9b9bd;
+  --line: #cfcfd2;
+  --text: #171717;
+  --text-2: #5b5b60;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); }
+body { padding: 20px 24px; font-size: 18px; line-height: 1.35; }
+h1 { font-size: 24px; font-weight: 600; margin: 0 0 4px; }
+p, .hint { color: var(--text-2); margin: 4px 0 14px; font-size: 15px; }
+.card { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin: 0 0 14px; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0; }
+.row > label { flex: 0 0 11em; color: var(--text-2); }
+input[type="text"], input[type="password"], input[type="number"], textarea {
+  flex: 1 1 14em; min-height: 44px; padding: 8px 12px; font: inherit; color: var(--text);
+  background: var(--fill); border: 1px solid var(--line); border-radius: var(--radius);
+}
+button {
+  min-height: 44px; padding: 8px 18px; font: inherit; color: var(--text);
+  background: var(--fill); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer;
+}
+button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+button:disabled { opacity: .45; cursor: default; }
+.status { min-height: 1.4em; margin: 6px 0; }
+.status.ok { color: var(--green); }
+.status.bad { color: var(--red); }
+.segments { display: flex; gap: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.segment { flex: 1 1 0; padding: 10px 8px; text-align: center; background: var(--fill); cursor: pointer; }
+.segment + .segment { border-left: 2px solid var(--bg); }
+.segment[aria-checked="true"] { background: var(--seg-on); }
+.segment[aria-disabled="true"] { opacity: .45; cursor: default; }

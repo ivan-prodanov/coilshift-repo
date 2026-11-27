@@ -89,6 +89,9 @@ csdk_api PUT /binds/direct-link-sv "{\"source\":\"$SVROOT\",\"target\":\"$DL_SV\
     || notes="${notes:+$notes; }no /run/direct-link-sv bind (use $SVROOT)"
 restart_changed camhelper agw
 
+# The panel's pairing QR (the supervisor keeps it current from here on).
+publish_car_host || true
+
 # 6. marker, status
 if [ -n "$notes" ]; then finish_apply degraded "$notes"; else finish_apply ok ""; fi
 exit 0

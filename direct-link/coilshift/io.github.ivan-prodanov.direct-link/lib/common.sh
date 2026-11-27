@@ -73,6 +73,7 @@ do_iptables()  { local t; t=$(tool iptables) || return 127; "$t" "$@"; }
 do_ip6tables() { local t; t=$(tool ip6tables) || return 127; "$t" "$@"; }
 do_kill()      { local t; t=$(tool kill) || return 127; "$t" "$@"; }
 do_chpst()     { local t; t=$(tool chpst) || return 127; "$t" "$@"; }
+do_ip()        { local t; t=$(tool ip) || return 127; "$t" "$@"; }
 
 # The absolute paths baked into the generated run scripts, as install-car.sh bakes them
 # (`command -v`). Under the harness they are the fakes; such scripts are never run.
@@ -93,6 +94,28 @@ owned_by() { local o=$1; shift; [ -n "$R" ] || chown "$o" "$@"; }
 boot_id() { cat "$PROC/sys/kernel/random/boot_id" 2>/dev/null || echo unknown; }
 
 # ---- checks (install-car.sh) ----
+
+# tailscale_addr prints the car's tailnet IPv4 (the one on tailscale0, inside 100.64.0.0/10), or nothing.
+tailscale_addr() {
+    local a o2
+    a=$(do_ip -4 -o addr show dev "$TS_IFACE" 2>/dev/null |
+        sed -n 's/.* inet \(100\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\)\/.*/\1/p' | head -n 1)
+    [ -n "$a" ] || return 0
+    o2=${a#100.}; o2=${o2%%.*}
+    [ "$o2" -ge 64 ] && [ "$o2" -le 127 ] && printf '%s' "$a"
+    return 0
+}
+
+# publish_car_host: Direct Link's panel shows the pairing QR for this address (panel/panel.js);
+# keep $CSDK_RUN/panel/car-host.txt equal to it, or absent while Tailscale has none. A changed
+# address is rewritten whole (new file, then rename), so the panel never reads half of it.
+publish_car_host() {
+    local d=$CSDK_RUN/panel a
+    a=$(tailscale_addr)
+    if [ -z "$a" ]; then rm -f "$d/car-host.txt"; return 0; fi
+    [ "$(cat "$d/car-host.txt" 2>/dev/null)" = "$a" ] && return 0
+    mkdir -p "$d" && printf '%s\n' "$a" >"$d/car-host.txt.new.$$" && mv -f "$d/car-host.txt.new.$$" "$d/car-host.txt"
+}
 
 # tailscale_present: CoilShift's Tailscale package is installed, or its interface is up.
 tailscale_present() { [ -d "$R$TS_PKG_DIR" ] || [ -e "$R/sys/class/net/$TS_IFACE" ]; }

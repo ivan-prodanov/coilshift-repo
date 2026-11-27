@@ -33,6 +33,17 @@ Direct mode (Direct Link 1.1.0 + Direct Summon 1.0.2, gateway `80b14ad`): built 
 tailnet name instead of the Pi), so update the car and the app together.
 **Not installed on the car yet** (migration below). The gateway's Go source has not reached Lupine yet (Author Agreement §3.2).
 
+## Pairing a phone (the panel)
+
+In the car, open CoilShift, then Direct Link: its panel shows a QR code. Scan it with the iPhone
+camera; it opens `airgapp://car-host?host=<the car's tailnet address>` in the app, which asks
+"Connect to your car directly?" and then connects to agw there. The address is the IPv4 on
+`tailscale0`; the supervisor keeps `$CSDK_RUN/panel/car-host.txt` current every 10 s (the panel
+says "Waiting for Tailscale" while there is none). The QR holds no secret: the phone pins the
+car's key on its first connect and checks it on every one after, and the car still lets in only
+an OWNER or DRIVER key. This replaces the Pi's `airgapp.me` page. The QR library is Kazuhiko
+Arase's qrcode-generator (MIT), the same file the Pi's page used.
+
 ## What runs where on the car
 
 | What | Where |
@@ -43,6 +54,7 @@ tailnet name instead of the Pi), so update the car and the app together.
 | Keys, logs | as today: `/var/lib/airgapp-gw/{state,svlog}`, `/var/lib/airgapp-camhelper/svlog`, `/var/lib/airgapp-summon/state` |
 | Config | `/var/lib/airgapp-gw/direct-link.conf`: `HELPER_WRITER` (`pw-cat` or `aplay`); a 1.0 `PI_IP` line is ignored |
 | Network | agw on the IPv4 of `tailscale0`, port 17100; nothing else listens or dials |
+| Panel | CoilShift → Direct Link: the pairing QR (`panel/`), from `$CSDK_RUN/panel/car-host.txt` |
 
 `direct-link.conf` is made at the first apply from today's installed scripts (so a migrated car
 keeps its writer), then it is yours to edit over SSH; it takes effect at the next

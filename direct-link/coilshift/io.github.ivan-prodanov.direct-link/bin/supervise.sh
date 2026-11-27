@@ -12,7 +12,9 @@
 #   5. Direct Summon only, "take it back": at start and every 10 s, at most once a minute, when
 #      summonhelper is set up (linked) and not running and com.tesla.Webrtc has an owner, the
 #      same bounded takeover as apply; if the name stays taken, stock is handed back and the
-#      status says so. It runs as a background job, so a stop signal is never held up by it.
+#      status says so. It runs as a background job, so a stop signal is never held up by it;
+#   6. Direct Link only: every 10 s, from the start, keep the panel's pairing address current
+#      (publish_car_host: the car's tailnet IPv4, which the panel shows as a QR).
 # bash 3.2. Under CSDK_FAKE_ROOT (direct-link/test) every tool is a fake.
 set -u
 : "${CSDK_PACKAGE_DIR:?}" "${CSDK_RUN:?}"
@@ -25,6 +27,9 @@ PIDFILE=$CSDK_RUN/runsvdir.pid
 TOOK=$CSDK_RUN/take-back.attempted
 TAKE_BACK=0
 [ "${CSDK_PKG:-}" = io.github.ivan-prodanov.direct-summon ] && TAKE_BACK=1
+PANEL=0
+[ "${CSDK_PKG:-}" = io.github.ivan-prodanov.direct-link ] && PANEL=1
+panel_tick() { [ "$PANEL" = 1 ] && [ $((NOW % 10)) = 0 ] && publish_car_host; return 0; }
 WAIT_NOTE=600 TAKE_EVERY=10 TAKE_MIN=60
 if [ -n "$R" ]; then # test seams, fake root only
     WAIT_NOTE=${T_WAIT_NOTE:-$WAIT_NOTE} TAKE_EVERY=${T_TAKE_EVERY:-$TAKE_EVERY} TAKE_MIN=${T_TAKE_MIN:-$TAKE_MIN}
@@ -89,10 +94,12 @@ take_back() {
 
 # 1. this boot's marker
 noted=0
+panel_tick
 until [ -f "$MARKER" ] && [ "$(cut -d' ' -f2 "$MARKER" 2>/dev/null)" = "$(boot_id)" ]; do
     sleep 1 &
     wait $! 2>/dev/null
     NOW=$((NOW + 1))
+    panel_tick
     if [ "$noted" = 0 ] && [ "$NOW" -ge "$WAIT_NOTE" ]; then
         noted=1
         set_status degraded "waiting for this boot's apply"
@@ -119,6 +126,7 @@ while kill -0 "$RSV" 2>/dev/null; do
     sleep 1 &
     wait $! 2>/dev/null
     NOW=$((NOW + 1))
+    panel_tick
     since=$((since + 1))
     if [ "$since" -ge "$TAKE_EVERY" ]; then since=0; take_back; fi
 done
