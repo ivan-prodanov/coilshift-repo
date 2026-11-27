@@ -185,6 +185,75 @@ var (
 	cgnat      = netip.MustParsePrefix("100.64.0.0/10")
 )
 
+// tailnetIface is the interface Tailscale gives the car its tailnet address on (CoilShift's Tailscale package runs
+// tailscaled in kernel mode). Tests swap ifaceAddrs.
+const tailnetIface = "tailscale0"
+
+var ifaceAddrs = func(name string) ([]net.Addr, error) {
+	ifc, err := net.InterfaceByName(name)
+	if err != nil {
+		return nil, err
+	}
+	return ifc.Addrs()
+}
+
+// tailnetListenAddr is -tailnet's bind address: the one IPv4 address on tailscale0, which must be inside the tailnet
+// range, on the default port. It is the only way agw binds a tailnet address: -listen and -dial keep refusing
+// 100.64.0.0/10, so a typo can never put agw on another node's address. Nothing here dials anything.
+// tailnetRetryWait is how long serve -tailnet waits before exiting when tailscale0 has no usable address;
+// tailnetCheckEvery is how often a running serve -tailnet re-reads it. Tests shorten both.
+var (
+	tailnetRetryWait  = 5 * time.Second
+	tailnetCheckEvery = 30 * time.Second
+)
+
+// watchTailnetAddr reports on moved, once, when tailscale0's address is no longer bound (Tailscale re-registered
+// the car, or it moved tailnets), so serve exits and runit rebinds. A failed read (Tailscale restarting) is not a
+// move: the bound address may come back, and the listener keeps it meanwhile.
+func watchTailnetAddr(ctx context.Context, bound string, moved chan<- error) {
+	t := time.NewTicker(tailnetCheckEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		now, err := tailnetListenAddr()
+		if err != nil || now == bound {
+			continue
+		}
+		moved <- fmt.Errorf("-tailnet: %s moved from %s to %s; restarting to rebind", tailnetIface, bound, now)
+		return
+	}
+}
+
+func tailnetListenAddr() (string, error) {
+	addrs, err := ifaceAddrs(tailnetIface)
+	if err != nil {
+		return "", fmt.Errorf("-tailnet: %s: %v (is Tailscale up?)", tailnetIface, err)
+	}
+	var found []netip.Addr
+	for _, a := range addrs {
+		pfx, err := netip.ParsePrefix(a.String())
+		if err != nil {
+			continue
+		}
+		if ip := pfx.Addr().Unmap(); ip.Is4() {
+			found = append(found, ip)
+		}
+	}
+	switch {
+	case len(found) == 0:
+		return "", fmt.Errorf("-tailnet: %s has no IPv4 address (is Tailscale up?)", tailnetIface)
+	case len(found) > 1:
+		return "", fmt.Errorf("-tailnet: %s has %d IPv4 addresses, expected one", tailnetIface, len(found))
+	case !cgnat.Contains(found[0]):
+		return "", fmt.Errorf("-tailnet: %s's address %s is outside the tailnet range %s", tailnetIface, found[0], cgnat)
+	}
+	return net.JoinHostPort(found[0].String(), defaultPort), nil
+}
+
 // checkListen enforces the listen-address rules and returns the normalised
 // host:port. bench permits only loopback; otherwise loopback, unspecified,
 // the vehicle LAN and the tailnet range are refused.
@@ -233,6 +302,7 @@ func cmdServe(ctx context.Context, args []string, stderr io.Writer) error {
 	fs := newFlags("serve", stderr)
 	listen := fs.String("listen", "", "ip[:port] to bind (the car's Wi-Fi address; default port 17100)")
 	dial := fs.String("dial", "", "ip[:port] of the Pi to connect out to (default port 17101); instead of -listen")
+	tailnet := fs.Bool("tailnet", false, "listen on this car's own tailnet address (the IPv4 on tailscale0), port 17100")
 	keyPath := fs.String("key", defaultDir+"/state/key.pem", "long-term key (mode 0400)")
 	vinFile := fs.String("vin-file", "/var/etc/vin", "file holding the VIN")
 	vinLit := fs.String("vin", "", "literal VIN (-bench only)")
@@ -258,14 +328,34 @@ func cmdServe(ctx context.Context, args []string, stderr io.Writer) error {
 	if *vinLit != "" && !*bench {
 		return errors.New("-vin requires -bench")
 	}
-	if (*listen == "") == (*dial == "") {
-		return usageError{errors.New("exactly one of -listen and -dial is required")}
+	modes := 0
+	for _, set := range []bool{*listen != "", *dial != "", *tailnet} {
+		if set {
+			modes++
+		}
+	}
+	if modes != 1 {
+		return usageError{errors.New("exactly one of -listen, -dial and -tailnet is required")}
+	}
+	if *tailnet && *bench {
+		return usageError{errors.New("-tailnet cannot be used with -bench (loopback only)")}
 	}
 	var addr string
 	var err error
-	if *dial != "" {
+	switch {
+	case *dial != "":
 		addr, err = checkDial(*dial, *bench)
-	} else {
+	case *tailnet:
+		if addr, err = tailnetListenAddr(); err != nil {
+			// Tailscale not up yet (or signed out): wait before exiting, so runit retries
+			// about every tailnetRetryWait instead of every second.
+			select {
+			case <-time.After(tailnetRetryWait):
+			case <-ctx.Done():
+			}
+			return err
+		}
+	default:
 		addr, err = checkListen(*listen, *bench)
 	}
 	if err != nil {
@@ -340,9 +430,12 @@ func cmdServe(ctx context.Context, args []string, stderr io.Writer) error {
 		}
 	}()
 
-	if *dial != "" {
+	switch {
+	case *dial != "":
 		log.Printf("agw: dialing the Pi at %s (capabilities %s)", addr, capNames(caps))
-	} else {
+	case *tailnet:
+		log.Printf("agw: listening on the tailnet at %s (capabilities %s)", ln.Addr(), capNames(caps))
+	default:
 		log.Printf("agw: listening on %s (capabilities %s)", ln.Addr(), capNames(caps))
 	}
 	if onListen != nil {
@@ -350,9 +443,19 @@ func cmdServe(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ln) }()
+	moved := make(chan error, 1)
+	if *tailnet {
+		go watchTailnetAddr(wctx, addr, moved)
+	}
 	select {
 	case err := <-done:
 		srv.Shutdown("error")
+		return err
+	case err := <-moved:
+		// The bound address is no longer this car's tailnet address: exit, and runit's
+		// restart binds the new one.
+		srv.Shutdown("tailnet address changed")
+		<-done
 		return err
 	case <-ctx.Done():
 		srv.Shutdown("sigterm")

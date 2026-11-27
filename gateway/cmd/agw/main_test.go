@@ -1107,9 +1107,11 @@ func TestServeNeedsExactlyOneOfListenAndDial(t *testing.T) {
 	for _, args := range [][]string{
 		{"serve", "-bench", "-fake-role", "2", "-listen", "127.0.0.1:0", "-dial", "127.0.0.1:5"},
 		{"serve", "-bench", "-fake-role", "2"},
+		{"serve", "-tailnet", "-dial", "192.168.4.1"},
+		{"serve", "-tailnet", "-listen", "192.168.4.2"},
 	} {
 		code, _, errs := runCmd(t, args...)
-		if code != 2 || !strings.Contains(errs, "exactly one of -listen and -dial") {
+		if code != 2 || !strings.Contains(errs, "exactly one of -listen, -dial and -tailnet") {
 			t.Errorf("%v: code=%d stderr=%q", args, code, errs)
 		}
 	}
@@ -1193,5 +1195,116 @@ func TestServeDialEndToEnd(t *testing.T) {
 		}
 		s.Close()
 		waitIdle(time.Second)
+	}
+}
+
+func TestServeTailnetRefusesBench(t *testing.T) {
+	code, _, errs := runCmd(t, "serve", "-bench", "-fake-role", "2", "-tailnet")
+	if code != 2 || !strings.Contains(errs, "-tailnet cannot be used with -bench") {
+		t.Fatalf("code=%d stderr=%q", code, errs)
+	}
+}
+
+func TestTailnetListenAddr(t *testing.T) {
+	prefix := func(ss ...string) []net.Addr {
+		var out []net.Addr
+		for _, s := range ss {
+			ip, n, err := net.ParseCIDR(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			n.IP = ip
+			out = append(out, n)
+		}
+		return out
+	}
+	cases := []struct {
+		name  string
+		addrs []net.Addr
+		err   error
+		want  string // the bind address, or "!" + a substring of the error
+	}{
+		{"one tailnet v4, v6 ignored", prefix("100.100.1.1/32", "fd7a:115c:a1e0::1/128"), nil, "100.100.1.1:17100"},
+		{"another tailnet v4", prefix("100.101.1.1/32"), nil, "100.101.1.1:17100"},
+		{"no interface", nil, errors.New("no such network interface"), "!is Tailscale up?"},
+		{"no v4", prefix("fd7a:115c:a1e0::1/128"), nil, "!no IPv4 address"},
+		{"two v4", prefix("100.100.1.1/32", "100.101.1.1/32"), nil, "!2 IPv4 addresses"},
+		{"outside the range", prefix("192.168.4.233/24"), nil, "!outside the tailnet range"},
+		{"vehicle LAN", prefix("192.168.90.100/24"), nil, "!outside the tailnet range"},
+	}
+	orig := ifaceAddrs
+	t.Cleanup(func() { ifaceAddrs = orig })
+	for _, c := range cases {
+		var asked string
+		ifaceAddrs = func(name string) ([]net.Addr, error) { asked = name; return c.addrs, c.err }
+		got, err := tailnetListenAddr()
+		if asked != "tailscale0" {
+			t.Errorf("%s: asked for interface %q, want tailscale0", c.name, asked)
+		}
+		if strings.HasPrefix(c.want, "!") {
+			if err == nil || !strings.Contains(err.Error(), c.want[1:]) {
+				t.Errorf("%s: got %q, %v, want error containing %q", c.name, got, err, c.want[1:])
+			}
+		} else if err != nil || got != c.want {
+			t.Errorf("%s: got %q, %v, want %q", c.name, got, err, c.want)
+		}
+	}
+}
+
+// TestServeTailnetNoAddress: the tailnet range cannot be bound in a test, so this checks the refusal end to end:
+// serve stops before reading the key when tailscale0 has no address. Binding itself is -listen's net.Listen.
+func TestServeTailnetNoAddress(t *testing.T) {
+	orig := ifaceAddrs
+	t.Cleanup(func() { ifaceAddrs = orig })
+	ifaceAddrs = func(string) ([]net.Addr, error) { return nil, nil }
+	origWait := tailnetRetryWait
+	t.Cleanup(func() { tailnetRetryWait = origWait })
+	tailnetRetryWait = 50 * time.Millisecond
+	start := time.Now()
+	code, _, errs := runCmd(t, "serve", "-tailnet", "-key", "/nonexistent")
+	if time.Since(start) < tailnetRetryWait {
+		t.Errorf("exited before the retry wait: runit would restart it in a tight loop")
+	}
+	if code != 1 || !strings.Contains(errs, "tailscale0 has no IPv4 address") {
+		t.Fatalf("code=%d stderr=%q", code, errs)
+	}
+}
+
+func TestWatchTailnetAddr(t *testing.T) {
+	origAddrs, origEvery := ifaceAddrs, tailnetCheckEvery
+	t.Cleanup(func() { ifaceAddrs, tailnetCheckEvery = origAddrs, origEvery })
+	tailnetCheckEvery = 5 * time.Millisecond
+	addr := func(s string) []net.Addr {
+		return []net.Addr{&net.IPNet{IP: net.ParseIP(s), Mask: net.CIDRMask(32, 32)}}
+	}
+
+	var mu sync.Mutex
+	cur, curErr := addr("100.100.1.1"), error(nil)
+	ifaceAddrs = func(string) ([]net.Addr, error) { mu.Lock(); defer mu.Unlock(); return cur, curErr }
+	set := func(a []net.Addr, err error) { mu.Lock(); cur, curErr = a, err; mu.Unlock() }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	moved := make(chan error, 1)
+	go watchTailnetAddr(ctx, "100.100.1.1:17100", moved)
+
+	// Unchanged, then unreadable (Tailscale restarting): no move.
+	time.Sleep(30 * time.Millisecond)
+	set(nil, errors.New("no such network interface"))
+	time.Sleep(30 * time.Millisecond)
+	select {
+	case err := <-moved:
+		t.Fatalf("reported a move without one: %v", err)
+	default:
+	}
+	// A new address: one move, naming both.
+	set(addr("100.101.1.1"), nil)
+	select {
+	case err := <-moved:
+		if !strings.Contains(err.Error(), "100.100.1.1:17100") || !strings.Contains(err.Error(), "100.101.1.1:17100") {
+			t.Fatalf("move error %q", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no move reported")
 	}
 }

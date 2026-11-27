@@ -29,6 +29,10 @@ pairs each phone connection with one idle car connection and pipes bytes.
   limits, 5 s / 20 s heartbeat lease, two-lane outbound, ordered teardown, session log.
 - Capability API for other features: `docs/CAPABILITY-API.md`, `capability/testkit`.
 - Bench client: `client.Dial`; bench server: `agw serve -bench -fake-role 2 -listen 127.0.0.1:17100 …` (or `-dial <pi-ip>[:17101]`: the car connects out to the Pi).
+- Direct mode (2026-11-27): `agw serve -tailnet` listens on the car's own tailnet address (the one IPv4 on
+  `tailscale0`, port 17100), so the phone reaches the car over Tailscale with no Pi in between. Inbound on
+  `tailscale0` passes the car's firewall (`ts-input` accepts it); the Wi-Fi module's NAT does not apply to the tunnel.
+  `-listen` and `-dial` keep refusing 100.64.0.0/10: `-tailnet` is the only way to bind a tailnet address.
 - Pi forwarder: airgapp/rpi branch `feat/gateway-pairing`.
 - Phone client: airgapp/mobile `modules/expo-gateway-client` + `src/services/gateway`
   (branch `feat/dashcam-viewer`). The real Swift session was verified end to end
