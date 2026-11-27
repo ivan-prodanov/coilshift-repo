@@ -43,6 +43,21 @@ csdk_api PUT /images/direct-summon "{\"payload\":\"payload/direct-summon-$GW_BUI
 [ "$(sha256_of "$img/summonhelper")" = "$SUMMONHELPER_SHA256" ] || fail "the image's summonhelper is not build $GW_BUILD"
 csdk_api PUT /binds/direct-summon-bin "{\"source\":\"$img\",\"target\":\"$DS_BIN\"}" >/dev/null \
     || fail "cannot bind summonhelper at $DS_BIN"
+# An update keeps the previous build's bind (CoilShift treats a PUT of the same name, source and target as
+# done; seen on 1.0.3 -> 1.0.4): drop it and bind again with summonhelper down meanwhile (its finish aborts
+# and disconnects; updates install only while parked), then check the bound binary. A reboot clears it too.
+rebound=0
+if [ -e "$R$DS_BIN/BUILD" ] && [ "$(sed -n 's/^build //p' "$R$DS_BIN/BUILD" 2>/dev/null | head -n 1)" != "$GW_BUILD" ]; then
+    [ -d "$SVROOT/summonhelper" ] && { do_sv -w 15 down "$SVROOT/summonhelper" >/dev/null 2>&1 || true; }
+    csdk_api DELETE /binds/direct-summon-bin >/dev/null 2>&1 \
+        && csdk_api PUT /binds/direct-summon-bin "{\"source\":\"$img\",\"target\":\"$DS_BIN\"}" >/dev/null \
+        || fail "the previous build's bind at $DS_BIN did not let go: reboot the car"
+    rebound=1
+fi
+if [ -e "$R$SUMMON_BIN" ]; then
+    [ "$(sha256_of "$R$SUMMON_BIN")" = "$SUMMONHELPER_SHA256" ] \
+        || fail "the summonhelper at $DS_BIN is not build $GW_BUILD: reboot the car"
+fi
 do_chpst -u ":$SUMMON_UID:$SUMMON_UID" test -x "$SUMMON_BIN" || fail "uid $SUMMON_UID cannot run $SUMMON_BIN"
 
 # 3. first run (install-car.sh steps 4b and 4c)
@@ -80,6 +95,10 @@ write_service summonhelper "$SUMMON_RUN" "$SUMMON_FINISH" "$SUMMON_LOG" "Direct 
 csdk_api PUT /binds/direct-summon-sv "{\"source\":\"$SVROOT\",\"target\":\"$DS_SV\"}" >/dev/null \
     || notes="${notes:+$notes; }no /run/direct-summon-sv bind (use $SVROOT)"
 restart_changed summonhelper
+# Back up after a rebind (restart_changed only restarts what is up).
+if [ "$rebound" = 1 ] && [ -d "$SVROOT/summonhelper" ]; then
+    do_sv up "$SVROOT/summonhelper" >/dev/null 2>&1 || true
+fi
 trap - EXIT TERM INT HUP
 
 # 6. marker, status

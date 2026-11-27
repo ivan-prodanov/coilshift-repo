@@ -18,8 +18,7 @@ it. 1.0.x dialled out to a Pi at `PI_IP:17101`; that is gone.
 - **Direct Summon** (`io.github.ivan-prodanov.direct-summon`, folder `../direct-summon/`):
   summonhelper (uid 1337), which takes `com.tesla.Webrtc` from stock `webrtc-comms`.
 
-Built from gateway `d04b446` (direct mode, plus Direct commands; summonhelper is byte-identical to
-`eccb2c4`'s), and the same runit run, finish and log scripts, apart from the
+Built from gateway `1fa81cf` (direct mode, plus Direct commands), and the same runit run, finish and log scripts, apart from the
 binary paths and agw's direct-mode run line (`test/run.sh` proves it against `install-car.sh`).
 Design: [DESIGN.md](DESIGN.md). Plan: [PLAN.md](PLAN.md).
 
@@ -30,8 +29,9 @@ Design: [DESIGN.md](DESIGN.md). Plan: [PLAN.md](PLAN.md).
 Published 2026-11-27 (1.0.0, gateway `eccb2c4`) at `https://ivan-prodanov.github.io/coilshift-repo/`, by the owner's go-ahead.
 Direct mode: Direct Link 1.1.0/1.1.1 + Direct Summon 1.0.2/1.0.3 (gateway `80b14ad`) published and on the car
 2026-11-27, owner-confirmed working (camera, talk, dashcam, Summon screen from the phone with no Pi).
-Direct commands: Direct Link 1.2.0 + Direct Summon 1.0.4 (gateway `d04b446`) built and tested 2026-11-27,
-**not published**. The gateway's Go source has not reached Lupine yet (Author Agreement §3.2).
+Direct commands: Direct Link 1.2.0 + Direct Summon 1.0.4 (gateway `d04b446`) published 2026-11-27, but agw's
+hello refused VCMD ("preauth: bad hello"), so the phone fell back to the Pi. Fixed in Direct Link 1.2.1 +
+Direct Summon 1.0.5 (gateway `1fa81cf`), which also re-make Direct Summon's stale binary bind on an update. The gateway's Go source has not reached Lupine yet (Author Agreement §3.2).
 
 ## Direct commands (1.2.0)
 
@@ -82,11 +82,11 @@ camera runbook's step 2b, add its hash in `build-payloads.sh`, rebuild, publish 
 ## Build and test (this repo)
 
 The gateway's Go source (agw, camhelper, summonhelper) is in [`../gateway/`](../gateway/), at the commit the
-packages are built from (`d04b446`; added with `git subtree --squash` from the local gateway repo, update with
+packages are built from (`1fa81cf`; added with `git subtree --squash` from the local gateway repo, update with
 `git subtree pull --prefix=gateway <gateway repo> <branch> --squash`). The build uses only this repo.
 
 ```bash
-direct-link/build-payloads.sh d04b446 <agw sha256> <camhelper sha256> <summonhelper sha256>
+direct-link/build-payloads.sh 1fa81cf <agw sha256> <camhelper sha256> <summonhelper sha256>
 direct-link/test/run.sh
 tools/build.sh
 ```
@@ -125,7 +125,7 @@ The keys are unchanged, so the phone needs nothing. The old binaries in
 
 ## Checks after an install, an update or a reboot
 
-- `cat /run/direct-link-bin/BUILD /run/direct-summon-bin/BUILD`: `build d04b446` in both.
+- `cat /run/direct-link-bin/BUILD /run/direct-summon-bin/BUILD`: `build 1fa81cf` in both.
 - `sha256sum /run/direct-link-bin/agw /run/direct-link-bin/camhelper /run/direct-summon-bin/summonhelper`: the reviewed hashes.
 - `sv status /run/direct-link-sv/* /run/direct-summon-sv/*`: all `run:`.
 - `iptables -S OUTPUT | grep -m1 '^-A'`: the jump to `AIRGAPP_GW_OUT`.
