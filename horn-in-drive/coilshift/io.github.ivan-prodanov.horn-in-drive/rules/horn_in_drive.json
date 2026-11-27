@@ -1,0 +1,33 @@
+{
+  "schema": 2,
+  "role": "browser-ui",
+  "live": "hot",
+  "params": {"keepfn": {"setting": "keep_toggles", "default": "true",
+             "map": {"true": "_ZN16DataValueManager8instanceEv", "false": "_ZN14TypedDataValueI19BoolDataValueHolderE8setValueERKb"}}},
+  "sites": [
+    { "name": "horn settings screen stays parked (externalSpeakerStateChanged -> isCarParked); routes to the enable branch",
+      "scope": {"symbol": "_ZN23ExternalSpeakerSettings27externalSpeakerStateChangedEv"}, "patched": "refuse",
+      "forms": [{"find": "488d6c2410e8????????84c00f85", "span": [5,10], "replace": "b801000000"}] },
+    { "name": "Horn Sound switch stays interactive (externalSpeakerStateChanged -> customPedestrianWarningSoundAllowed); feeds enableSwitch(true)",
+      "scope": {"symbol": "_ZN23ExternalSpeakerSettings27externalSpeakerStateChangedEv"}, "patched": "refuse",
+      "forms": [{"find": "bf01000000e8????????4c89ef", "span": [5,10], "replace": "b801000000"}] },
+    { "name": "dropdown active-state behaves parked (updateActiveState -> inDrivingGear)",
+      "scope": {"symbol": "_ZN21ExternalSoundDropdown17updateActiveStateEv"}, "patched": "refuse",
+      "forms": [{"find": "bf01000000e8????????84c00f85", "span": [5,10], "replace": "31c0909090"}] },
+    { "name": "dropdown availability behaves parked (updateButtonAvailabilty -> inDrivingGear)",
+      "scope": {"symbol": "_ZN21ExternalSoundDropdown23updateButtonAvailabiltyEv"}, "patched": "refuse",
+      "forms": [{"find": "bf01000000e8????????4084ed75", "span": [5,10], "replace": "31c0909090"}] },
+    { "name": "Drive no longer clears Replace Horn (onShiftStateChanged skips setValue(false))",
+      "scope": {"symbol": "_ZN22ExternalSpeakerManager19onShiftStateChangedEv"}, "patched": "refuse",
+      "forms": [{"find": "84c074174889df", "span": [2,4], "replace": "9090"}] },
+    { "name": "Replace Horn switch shown outside US/CA/MX (ExternalSpeakerSettings ctor -> canSuppressHorn, a VAPI_countryCode check); optional so a moved gate never costs the other five",
+      "scope": {"symbol": "_ZN23ExternalSpeakerSettingsC2EP11DisplayView"}, "patched": "refuse", "required": false,
+      "forms": [{"find": "e8{rel:plt:_ZN23ExternalSpeakerSettings17populateDropdownsEv} e8{rel:plt:_ZN12VehicleUtils15canSuppressHornEv} 4c8da3???????? 84c0 74", "span": [5,10], "replace": "b801000000"}] },
+    { "name": "keep_toggles: UI start and geofence crossings no longer clear Replace Horn (updateFactoryLowHornNoiseAreaMode's non-factory branch calls DataValueManager::instance() instead of setValue(GUI_disableHorn, false)); false leaves the call stock",
+      "scope": {"symbol": "_ZN22ExternalSpeakerManager33updateFactoryLowHornNoiseAreaModeEv"}, "patched": "skip", "required": false,
+      "forms": [{"find": "e8{rel:plt:_ZN14TypedDataValueI19BoolDataValueHolderE8setValueERKb} 488b3d???????? 4889de c64424??00 e8{rel:plt:_ZN14TypedDataValueI19BoolDataValueHolderE8setValueERKb} beffffffff", "span": [0,5], "replace": "e8{rel:plt:$keepfn}"}] },
+    { "name": "keep_toggles: the same for Horn Sound (setValue(GUI_pesHornSoundEnabled, false))",
+      "scope": {"symbol": "_ZN22ExternalSpeakerManager33updateFactoryLowHornNoiseAreaModeEv"}, "patched": "skip", "required": false,
+      "forms": [{"find": "4889de c64424??00 e8{rel:plt:_ZN14TypedDataValueI19BoolDataValueHolderE8setValueERKb} beffffffff", "span": [8,13], "replace": "e8{rel:plt:$keepfn}"}] }
+  ]
+}

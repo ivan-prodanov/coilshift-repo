@@ -1,0 +1,9 @@
+# private settings: the car's identifiers (local.env.example lists what goes there)
+local.env
+# build outputs (tools/build.sh), the publish checkout (tools/publish.sh) and the pinned csdk binaries (tools/get-csdk.sh)
+dist/
+site/
+.pages/
+tools/bin/
+*.csp
+.DS_Store

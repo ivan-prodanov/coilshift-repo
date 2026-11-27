@@ -1,0 +1,33 @@
+#!/bin/bash
+# fake iptables/ip6tables: OUTPUT plus user chains, rules kept verbatim in .fakes/state/<name>.
+. "$(dirname "$0")/_lib.sh"
+me=$(basename "$0")
+rules=$st/$me.rules chains=$st/$me.chains
+touch "$rules" "$chains"
+log "$me $*"
+tidy() { [ -s "$rules" ] || rm -f "$rules"; [ -s "$chains" ] || rm -f "$chains"; }
+trap tidy EXIT
+has_chain() { [ "$1" = OUTPUT ] || grep -qx -- "$1" "$chains"; }
+op=$1 c=${2:-}; shift 2 || true
+case "$op" in
+-N) has_chain "$c" && exit 1; echo "$c" >>"$chains" ;;
+-X) [ "$c" != OUTPUT ] && has_chain "$c" || exit 1; grep -q "^-A $c " "$rules" && exit 1
+    grep -vx -- "$c" "$chains" >"$chains.n" || true; mv "$chains.n" "$chains" ;;
+-F) has_chain "$c" || exit 1; grep -v "^-A $c " "$rules" >"$rules.n" || true; mv "$rules.n" "$rules" ;;
+-S) has_chain "$c" || exit 1
+    if [ "$c" = OUTPUT ]; then echo "-P OUTPUT ACCEPT"; else echo "-N $c"; fi
+    grep "^-A $c " "$rules" || true ;;
+-C) has_chain "$c" || exit 1; grep -qxF -- "-A $c $*" "$rules" ;;
+-A) has_chain "$c" || exit 1; echo "-A $c $*" >>"$rules" ;;
+-I) has_chain "$c" || exit 1; n=$1; shift
+    awk -v c="$c" -v n="$n" -v r="-A $c $*" 'BEGIN{k=0} $0 ~ "^-A " c " " {k++; if (k==n) {print r; done=1}} {print} END{if(!done) print r}' "$rules" >"$rules.n"
+    mv "$rules.n" "$rules" ;;
+-D) has_chain "$c" || exit 1
+    if [ $# -eq 1 ] && [ -z "${1//[0-9]/}" ]; then
+        awk -v c="$c" -v n="$1" '$0 ~ "^-A " c " " {k++; if (k==n) {found=1; next}} {print} END{exit !found}' "$rules" >"$rules.n" || { rm -f "$rules.n"; exit 1; }
+    else
+        awk -v r="-A $c $*" '!found && $0 == r {found=1; next} {print} END{exit !found}' "$rules" >"$rules.n" || { rm -f "$rules.n"; exit 1; }
+    fi
+    mv "$rules.n" "$rules" ;;
+*) echo "fake $me: unsupported $op" >&2; exit 2 ;;
+esac

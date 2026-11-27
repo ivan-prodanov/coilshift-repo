@@ -1,0 +1,11 @@
+#!/bin/bash
+# fake sv: logs; for /etc/sv/webrtc-comms keeps stock's state and the name's owner (a "sticky"
+# file keeps the name taken, as if someone else held it).
+. "$(dirname "$0")/_lib.sh"
+log "sv $*"
+[ "$1" = -w ] && shift 2
+case "$1:${2:-}" in
+down:/etc/sv/webrtc-comms) put webrtc down; [ -e "$st/sticky" ] || put owner false ;;
+up:/etc/sv/webrtc-comms) put webrtc up; put owner true ;;
+esac
+exit 0

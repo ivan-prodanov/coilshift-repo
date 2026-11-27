@@ -1,0 +1,11 @@
+#!/bin/bash
+# fake chpst -u :U:G CMD...: `test` checks the fake root's path; `keygen -key P` makes P there.
+. "$(dirname "$0")/_lib.sh"
+shift 2
+log "chpst $*"
+if [ "$1" = test ]; then test "$2" "$root$3"; exit; fi
+while [ $# -gt 0 ]; do
+    if [ "$1" = -key ]; then mkdir -p "$root$(dirname "$2")"; : >"$root$2"; fi
+    shift
+done
+exit 0

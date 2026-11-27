@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "id": "io.github.ivan-prodanov.lock-chime-random",
+  "version": "1.1.2",
+  "sdk": ">=1.0 <2",
+  "title": "Random lock chime",
+  "summary": "Plays a random clip every time you lock. Add a folder named LockChime to your USB stick (any partition the car mounts) and fill it with short WAV clips: mono, 48 kHz, 16-bit. Needs a USB lock sound set in Toybox > Boombox > Lock Sound. Removing it restores your sound.",
+  "capabilities": [
+    "service"
+  ],
+  "settings": [
+    {
+      "id": "folder",
+      "type": "string",
+      "title": "USB folder name",
+      "summary": "Name of the folder holding your clips, on any partition of the USB stick the car mounts. Clips must be WAV, mono, 48 kHz, 16-bit (others are skipped), ideally under 5 seconds. To convert: ffmpeg -i in.mp3 -ac 1 -ar 48000 -c:a pcm_s16le -t 5 out.wav",
+      "group": "Lock sound",
+      "default": "LockChime"
+    }
+  ],
+  "hooks": {
+    "apply": [
+      {
+        "id": "apply",
+        "run": "hooks/apply.sh",
+        "rerun": "in-place",
+        "phase": "late",
+        "timeout": 60
+      }
+    ],
+    "service": [
+      {
+        "id": "lockrand",
+        "run": "bin/cs-lockrand.sh",
+        "restart": "always"
+      }
+    ],
+    "remove": {
+      "run": "hooks/remove.sh",
+      "timeout": 60
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+    "schema": 1,
+    "id": "io.github.ivan-prodanov.fart-in-drive",
+    "version": "1.1.0",
+    "sdk": ">=1.0 <2",
+    "title": "Fart & Furious",
+    "summary": "Bringing emissions back to EVs. Re-enables vehicle emissions by routing the in-cabin fart sound effect through Drive instead of Park, restoring a more authentic ICE-era atmosphere.",
+    "capabilities": [
+        "byte_rules:browser-ui"
+    ],
+    "byte_rules": [
+        "rules/fart_in_drive.json"
+    ]
+}

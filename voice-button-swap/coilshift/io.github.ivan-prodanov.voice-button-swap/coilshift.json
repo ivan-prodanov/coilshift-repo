@@ -1,0 +1,14 @@
+{
+    "schema": 1,
+    "id": "io.github.ivan-prodanov.voice-button-swap",
+    "version": "1.1.0",
+    "sdk": ">=1.0 <2",
+    "title": "Voice Button Swap",
+    "summary": "Single tap starts Grok, long press the legacy assistant. Everything else works as before. Requires restart.",
+    "capabilities": [
+        "byte_rules:browser-ui"
+    ],
+    "byte_rules": [
+        "rules/voice_button_swap.json"
+    ]
+}

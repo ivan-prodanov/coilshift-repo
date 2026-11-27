@@ -1,0 +1,497 @@
+[
+ {
+  "type": "SentryClips",
+  "folder": "2026-11-10_01-00-00",
+  "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-10_01-00-00",
+  "reason": "",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "",
+  "minutes": {
+   "2026-11-10_00-59-01": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-10_01-00-00/2026-11-10_00-59-01-front.mp4",
+     "size": 100
+    },
+    "back": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-10_01-00-00/2026-11-10_00-59-01-back.mp4",
+     "size": 0
+    }
+   }
+  },
+  "thumb": null,
+  "minute_list": [
+   "2026-11-10_00-59-01"
+  ],
+  "start": "2026-11-10_00-59-01",
+  "trigger_cam_key": "",
+  "trigger_minute": "",
+  "trigger_offset": null
+ },
+ {
+  "type": "SentryClips",
+  "folder": "2026-11-12_03-00-00",
+  "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-12_03-00-00",
+  "reason": "sentry_aware_object_detection",
+  "city": "Köln",
+  "lat": 52.52,
+  "lon": -13.405,
+  "trigger_cam": "3",
+  "minutes": {
+   "2026-11-12_03-00-01": {
+    "left_pillar": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-12_03-00-00/2026-11-12_03-00-01-left_pillar.mp4",
+     "size": 1
+    }
+   },
+   "2026-11-12_03-01-01": {
+    "left_pillar": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-12_03-00-00/2026-11-12_03-01-01-left_pillar.mp4",
+     "size": 2
+    }
+   }
+  },
+  "thumb": null,
+  "timestamp": "2026-11-12T03:10:00",
+  "minute_list": [
+   "2026-11-12_03-00-01",
+   "2026-11-12_03-01-01"
+  ],
+  "start": "2026-11-12_03-00-01",
+  "trigger_cam_key": "left_pillar",
+  "trigger_minute": "",
+  "trigger_offset": null
+ },
+ {
+  "type": "SentryClips",
+  "folder": "2026-11-12_03-00-00b",
+  "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-12_03-00-00b",
+  "reason": "",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "0",
+  "minutes": {
+   "2026-11-12_03-00-01": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-12_03-00-00b/2026-11-12_03-00-01-front.mp4",
+     "size": 1
+    }
+   }
+  },
+  "thumb": null,
+  "timestamp": "2026-11-12T02:59:00",
+  "minute_list": [
+   "2026-11-12_03-00-01"
+  ],
+  "start": "2026-11-12_03-00-01",
+  "trigger_cam_key": "front",
+  "trigger_minute": "2026-11-12_03-00-01",
+  "trigger_offset": 0.0
+ },
+ {
+  "type": "SentryClips",
+  "folder": "2026-11-16_07-56-30",
+  "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-16_07-56-30",
+  "reason": "sentry_aware_object_detection",
+  "city": "Berlin",
+  "lat": "52.5200",
+  "lon": "13.4050",
+  "trigger_cam": "6",
+  "minutes": {
+   "2026-11-16_07-55-46": {
+    "back": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-16_07-56-30/2026-11-16_07-55-46-back.mp4",
+     "size": 30000001
+    },
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-16_07-56-30/2026-11-16_07-55-46-front.mp4",
+     "size": 40000002
+    },
+    "left_pillar": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-16_07-56-30/2026-11-16_07-55-46-left_pillar.mp4",
+     "size": 30000003
+    },
+    "left_repeater": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-16_07-56-30/2026-11-16_07-55-46-left_repeater.mp4",
+     "size": 30000004
+    },
+    "right_pillar": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-16_07-56-30/2026-11-16_07-55-46-right_pillar.mp4",
+     "size": 30000005
+    },
+    "right_repeater": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-16_07-56-30/2026-11-16_07-55-46-right_repeater.mp4",
+     "size": 30000006
+    }
+   },
+   "2026-11-16_07-56-46": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-16_07-56-30/2026-11-16_07-56-46-front.mp4",
+     "size": 12000000
+    },
+    "right_repeater": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-16_07-56-30/2026-11-16_07-56-46-right_repeater.mp4",
+     "size": 11000000
+    }
+   },
+   "thumbnail": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SentryClips/2026-11-16_07-56-30/thumbnail-front.mp4",
+     "size": 7
+    }
+   }
+  },
+  "thumb": null,
+  "timestamp": "2026-11-16T07:56:30",
+  "minute_list": [
+   "2026-11-16_07-55-46",
+   "2026-11-16_07-56-46",
+   "thumbnail"
+  ],
+  "start": "2026-11-16_07-55-46",
+  "trigger_cam_key": "right_repeater",
+  "trigger_minute": "2026-11-16_07-55-46",
+  "trigger_offset": 44.0
+ },
+ {
+  "type": "SavedClips",
+  "folder": "2026-11-13_13-00-00",
+  "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_13-00-00",
+  "reason": "",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "6.0",
+  "minutes": {
+   "2026-2-3_4-05-00": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_13-00-00/2026-2-3_4-05-00-front.mp4",
+     "size": 3
+    }
+   },
+   "2026-02-03_04-05-01": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_13-00-00/2026-02-03_04-05-01-front.mp4",
+     "size": 4
+    }
+   }
+  },
+  "thumb": null,
+  "timestamp": "2026-2-3T4:05:6",
+  "minute_list": [
+   "2026-02-03_04-05-01",
+   "2026-2-3_4-05-00"
+  ],
+  "start": "2026-02-03_04-05-01",
+  "trigger_cam_key": "",
+  "trigger_minute": "2026-2-3_4-05-00",
+  "trigger_offset": 6.0
+ },
+ {
+  "type": "SavedClips",
+  "folder": "2026-11-13_14-00-00",
+  "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_14-00-00",
+  "reason": "",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "True",
+  "minutes": {
+   "2026-02-30_04-05-00": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_14-00-00/2026-02-30_04-05-00-front.mp4",
+     "size": 3
+    }
+   }
+  },
+  "thumb": null,
+  "timestamp": "2026-02-30T04:05:06",
+  "minute_list": [
+   "2026-02-30_04-05-00"
+  ],
+  "start": "2026-02-30_04-05-00",
+  "trigger_cam_key": "",
+  "trigger_minute": "",
+  "trigger_offset": null
+ },
+ {
+  "type": "SavedClips",
+  "folder": "same-start-a",
+  "path": "/mnt/usb/TeslaCam/SavedClips/same-start-a",
+  "reason": "",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "",
+  "minutes": {
+   "2026-11-01_00-00-00": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/same-start-a/2026-11-01_00-00-00-front.mp4",
+     "size": 1
+    }
+   }
+  },
+  "thumb": null,
+  "minute_list": [
+   "2026-11-01_00-00-00"
+  ],
+  "start": "2026-11-01_00-00-00",
+  "trigger_cam_key": "",
+  "trigger_minute": "",
+  "trigger_offset": null
+ },
+ {
+  "type": "SavedClips",
+  "folder": "same-start-b",
+  "path": "/mnt/usb/TeslaCam/SavedClips/same-start-b",
+  "reason": "",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "",
+  "minutes": {
+   "2026-11-01_00-00-00": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/same-start-b/2026-11-01_00-00-00-front.mp4",
+     "size": 2
+    }
+   }
+  },
+  "thumb": null,
+  "minute_list": [
+   "2026-11-01_00-00-00"
+  ],
+  "start": "2026-11-01_00-00-00",
+  "trigger_cam_key": "",
+  "trigger_minute": "",
+  "trigger_offset": null
+ },
+ {
+  "type": "SavedClips",
+  "folder": "2026-11-13_08-00-00",
+  "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_08-00-00",
+  "reason": "user_interaction_dashcam_icon_tapped",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "7",
+  "minutes": {
+   "2026-11-13_07-59-10": {
+    "back": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_08-00-00/2026-11-13_07-59-10-back.mp4",
+     "size": 600
+    }
+   },
+   "2026-11-13_08-00-00": {
+    "back": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_08-00-00/2026-11-13_08-00-00-back.mp4",
+     "size": 601
+    }
+   }
+  },
+  "thumb": null,
+  "timestamp": "2026-11-13T08:00:35",
+  "minute_list": [
+   "2026-11-13_07-59-10",
+   "2026-11-13_08-00-00"
+  ],
+  "start": "2026-11-13_07-59-10",
+  "trigger_cam_key": "back",
+  "trigger_minute": "2026-11-13_08-00-00",
+  "trigger_offset": 35.0
+ },
+ {
+  "type": "SavedClips",
+  "folder": "2026-11-13_09-00-00",
+  "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_09-00-00",
+  "reason": "",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "",
+  "minutes": {
+   "2026-11-13_08-59-10": {
+    "back": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_09-00-00/2026-11-13_08-59-10-back.mp4",
+     "size": 700
+    }
+   }
+  },
+  "thumb": null,
+  "minute_list": [
+   "2026-11-13_08-59-10"
+  ],
+  "start": "2026-11-13_08-59-10",
+  "trigger_cam_key": "",
+  "trigger_minute": "",
+  "trigger_offset": null
+ },
+ {
+  "type": "SavedClips",
+  "folder": "2026-11-13_10-00-00",
+  "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_10-00-00",
+  "reason": "",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "",
+  "minutes": {
+   "2026-11-13_09-59-10": {
+    "right_pillar": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_10-00-00/2026-11-13_09-59-10-right_pillar.mp4",
+     "size": 800
+    }
+   }
+  },
+  "thumb": null,
+  "minute_list": [
+   "2026-11-13_09-59-10"
+  ],
+  "start": "2026-11-13_09-59-10",
+  "trigger_cam_key": "",
+  "trigger_minute": "",
+  "trigger_offset": null
+ },
+ {
+  "type": "SavedClips",
+  "folder": "2026-11-13_11-00-00",
+  "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_11-00-00",
+  "reason": null,
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "None",
+  "minutes": {
+   "2026-11-13_10-59-10": {
+    "left_repeater": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_11-00-00/2026-11-13_10-59-10-left_repeater.mp4",
+     "size": 900
+    }
+   }
+  },
+  "thumb": null,
+  "timestamp": null,
+  "minute_list": [
+   "2026-11-13_10-59-10"
+  ],
+  "start": "2026-11-13_10-59-10",
+  "trigger_cam_key": "",
+  "trigger_minute": "",
+  "trigger_offset": null
+ },
+ {
+  "type": "SavedClips",
+  "folder": "2026-11-13_12-00-00",
+  "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_12-00-00",
+  "reason": "",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "5",
+  "minutes": {
+   "2026-11-13_11-59-10": {
+    "left_repeater": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-13_12-00-00/2026-11-13_11-59-10-left_repeater.mp4",
+     "size": 1000
+    }
+   }
+  },
+  "thumb": null,
+  "timestamp": "2026-11-13T12:05:00",
+  "minute_list": [
+   "2026-11-13_11-59-10"
+  ],
+  "start": "2026-11-13_11-59-10",
+  "trigger_cam_key": "left_repeater",
+  "trigger_minute": "",
+  "trigger_offset": null
+ },
+ {
+  "type": "SavedClips",
+  "folder": "2026-11-14_09-30-00",
+  "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-14_09-30-00",
+  "reason": "user_interaction_honk",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "0",
+  "minutes": {
+   "2026-11-14_09-29-10": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-14_09-30-00/2026-11-14_09-29-10-front.mp4",
+     "size": 500
+    }
+   },
+   "2026-11-14_09-29-40": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-14_09-30-00/2026-11-14_09-29-40-front.mp4",
+     "size": 501
+    }
+   },
+   "2026-11-14_09-30-40": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/SavedClips/2026-11-14_09-30-00/2026-11-14_09-30-40-front.mp4",
+     "size": 502
+    }
+   }
+  },
+  "thumb": null,
+  "timestamp": "2026-11-14T09:30:20",
+  "minute_list": [
+   "2026-11-14_09-29-10",
+   "2026-11-14_09-29-40",
+   "2026-11-14_09-30-40"
+  ],
+  "start": "2026-11-14_09-29-10",
+  "trigger_cam_key": "front",
+  "trigger_minute": "2026-11-14_09-29-40",
+  "trigger_offset": 40.0
+ },
+ {
+  "type": "RecentClips",
+  "folder": "RecentClips",
+  "path": "/mnt/usb/TeslaCam/RecentClips",
+  "reason": "rolling buffer",
+  "city": "",
+  "lat": "",
+  "lon": "",
+  "trigger_cam": "",
+  "trigger_cam_key": "",
+  "trigger_minute": "",
+  "trigger_offset": null,
+  "timestamp": "2026-11-20_06-02-00",
+  "minutes": {
+   "2026-11-20_06-00-00": {
+    "back": {
+     "path": "/mnt/usb/TeslaCam/RecentClips/2026-11-20_06-00-00-back.mp4",
+     "size": 10
+    },
+    "front": {
+     "path": "/mnt/usb/TeslaCam/RecentClips/2026-11-20_06-00-00-front.mp4",
+     "size": 11
+    }
+   },
+   "2026-11-20_06-01-00": {
+    "front": {
+     "path": "/mnt/usb/TeslaCam/RecentClips/2026-11-20_06-01-00-front.mp4",
+     "size": 12
+    }
+   },
+   "2026-11-20_06-02-00": {
+    "left_repeater": {
+     "path": "/mnt/usb/TeslaCam/RecentClips/2026-11-20_06-02-00-left_repeater.mp4",
+     "size": 13
+    }
+   }
+  },
+  "minute_list": [
+   "2026-11-20_06-02-00",
+   "2026-11-20_06-01-00",
+   "2026-11-20_06-00-00"
+  ],
+  "start": "2026-11-20_06-02-00",
+  "thumb": null
+ }
+]

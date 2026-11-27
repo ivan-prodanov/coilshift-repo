@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "io.github.ivan-prodanov.boombox-in-drive",
+  "version": "1.0.0",
+  "sdk": ">=1.0 <2",
+  "title": "Boombox in Drive",
+  "summary": "Keeps the Boombox and Megaphone buttons usable while driving: neutralises the 4 isCarParked checks in ExternalSpeakerSettings::updateButtonStates that re-grey them on every gear change. Pairs with the built-in enable-boombox package.",
+  "capabilities": [
+    "byte_rules:browser-ui"
+  ],
+  "byte_rules": [
+    "rules/boombox_in_drive.json"
+  ]
+}

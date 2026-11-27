@@ -1,0 +1,221 @@
+{
+  "schema": 2,
+  "role": "browser-ui",
+  "live": "hot",
+  "requires_symbols": [
+    "_ZN19VoiceControlHandler18qt_static_metacallEP7QObjectN11QMetaObject4CallEiPPv",
+    "_ZN19VoiceControlHandler18voiceButtonPressedEv",
+    "_ZN19VoiceControlHandler15voiceButtonHeldEv",
+    "_ZN35SteeringWheelLongPressVoiceHintView27currentLongPressVoiceActionEv"
+  ],
+  "sites": [
+    {
+      "name": "blob/vbswap.S (2026.38.6) over currentLongPressVoiceAction: returns none (hides 'Long press for Grok'), then the idle test and the two gesture entries",
+      "blob": "vbswap",
+      "required": false
+    },
+    {
+      "name": "blob/vbswap.S (2026.8.6) over currentLongPressVoiceAction: returns none (hides 'Long press for Grok'), then the idle test and the two gesture entries",
+      "blob": "vbswap86",
+      "required": false
+    },
+    {
+      "name": "short press (qt_static_metacall slot 11, voiceButtonPressed) goes through the blob's press entry",
+      "scope": {
+        "symbol": "_ZN19VoiceControlHandler18qt_static_metacallEP7QObjectN11QMetaObject4CallEiPPv"
+      },
+      "patched": "refuse",
+      "forms": [
+        {
+          "when": {
+            "symbol": "_ZN15CarAssistClient20asyncVoiceButtonHeldEv"
+          },
+          "find": "e9{rel:plt:_ZN19VoiceControlHandler18voiceButtonPressedEv} 66662e0f1f840000000000 e9{rel:plt:_ZN19VoiceControlHandler23voiceButtonPressStartedEv}",
+          "span": [
+            0,
+            5
+          ],
+          "replace": "e9{rel:blob:vbswap+press}"
+        },
+        {
+          "when": {
+            "symbol": "_ZN19VoiceControlHandler21onAudioIntensityLevelEid"
+          },
+          "find": "e9{rel:plt:_ZN19VoiceControlHandler18voiceButtonPressedEv} 66662e0f1f840000000000 e9{rel:plt:_ZN19VoiceControlHandler23voiceButtonPressStartedEv}",
+          "span": [
+            0,
+            5
+          ],
+          "replace": "e9{rel:blob:vbswap86+press}"
+        }
+      ]
+    },
+    {
+      "name": "hold (qt_static_metacall slot 12, voiceButtonHeld) goes through the blob's held entry",
+      "scope": {
+        "symbol": "_ZN19VoiceControlHandler18qt_static_metacallEP7QObjectN11QMetaObject4CallEiPPv"
+      },
+      "patched": "refuse",
+      "forms": [
+        {
+          "when": {
+            "symbol": "_ZN15CarAssistClient20asyncVoiceButtonHeldEv"
+          },
+          "find": "e9{rel:plt:_ZN19VoiceControlHandler28voiceButtonReleasedAfterHoldEv} 66662e0f1f840000000000 e9{rel:plt:_ZN19VoiceControlHandler15voiceButtonHeldEv}",
+          "span": [
+            16,
+            21
+          ],
+          "replace": "e9{rel:blob:vbswap+held}"
+        },
+        {
+          "when": {
+            "symbol": "_ZN19VoiceControlHandler21onAudioIntensityLevelEid"
+          },
+          "find": "e9{rel:plt:_ZN19VoiceControlHandler28voiceButtonReleasedAfterHoldEv} 66662e0f1f840000000000 e9{rel:plt:_ZN19VoiceControlHandler15voiceButtonHeldEv}",
+          "span": [
+            16,
+            21
+          ],
+          "replace": "e9{rel:blob:vbswap86+held}"
+        }
+      ]
+    }
+  ],
+  "blobs": [
+    {
+      "name": "vbswap",
+      "hex": "31c0c3488b05000000008b404c83e80283f801760be81b0000000f8400000000e900000000e80b0000000f8400000000e900000000488b0500000000f6403401740683784c017433488b0500000000807849007526488b0500000000807849007519488b050000000080784900750c488b050000000080784900c30c01c3",
+      "place": "symbol_start",
+      "symbol": "_ZN35SteeringWheelLongPressVoiceHintView27currentLongPressVoiceActionEv",
+      "prologue": "415653488d3dd95520ff",
+      "fixups": [
+        {
+          "at": 6,
+          "kind": "pc32",
+          "to": "got:GUI_assistantBlockedReason",
+          "addend": -4
+        },
+        {
+          "at": 28,
+          "kind": "pc32",
+          "to": "plt:_ZN19VoiceControlHandler15voiceButtonHeldEv",
+          "addend": -4
+        },
+        {
+          "at": 33,
+          "kind": "pc32",
+          "to": "plt:_ZN19VoiceControlHandler18voiceButtonPressedEv",
+          "addend": -4
+        },
+        {
+          "at": 44,
+          "kind": "pc32",
+          "to": "plt:_ZN19VoiceControlHandler18voiceButtonPressedEv",
+          "addend": -4
+        },
+        {
+          "at": 49,
+          "kind": "pc32",
+          "to": "plt:_ZN19VoiceControlHandler15voiceButtonHeldEv",
+          "addend": -4
+        },
+        {
+          "at": 56,
+          "kind": "pc32",
+          "to": "got:GUI_voiceCommandApprovalState",
+          "addend": -4
+        },
+        {
+          "at": 75,
+          "kind": "pc32",
+          "to": "got:GUI_carAssistViewOpen",
+          "addend": -4
+        },
+        {
+          "at": 88,
+          "kind": "pc32",
+          "to": "got:GUI_assistantViewOpen",
+          "addend": -4
+        },
+        {
+          "at": 101,
+          "kind": "pc32",
+          "to": "got:GUI_assistantVoiceActive",
+          "addend": -4
+        },
+        {
+          "at": 114,
+          "kind": "pc32",
+          "to": "got:GUI_voiceRecAsPlainText",
+          "addend": -4
+        }
+      ],
+      "entries": {
+        "press": 3,
+        "held": 37
+      }
+    },
+    {
+      "name": "vbswap86",
+      "hex": "31c0c3e81b0000000f8400000000e900000000e80b0000000f8400000000e900000000488b0500000000807849007526488b0500000000807849007519488b050000000080784900750c488b050000000080784900c30c01c3",
+      "place": "symbol_start",
+      "symbol": "_ZN35SteeringWheelLongPressVoiceHintView27currentLongPressVoiceActionEv",
+      "prologue": "415653488d3d160e5101",
+      "fixups": [
+        {
+          "at": 10,
+          "kind": "pc32",
+          "to": "plt:_ZN19VoiceControlHandler15voiceButtonHeldEv",
+          "addend": -4
+        },
+        {
+          "at": 15,
+          "kind": "pc32",
+          "to": "plt:_ZN19VoiceControlHandler18voiceButtonPressedEv",
+          "addend": -4
+        },
+        {
+          "at": 26,
+          "kind": "pc32",
+          "to": "plt:_ZN19VoiceControlHandler18voiceButtonPressedEv",
+          "addend": -4
+        },
+        {
+          "at": 31,
+          "kind": "pc32",
+          "to": "plt:_ZN19VoiceControlHandler15voiceButtonHeldEv",
+          "addend": -4
+        },
+        {
+          "at": 38,
+          "kind": "pc32",
+          "to": "got:GUI_carAssistViewOpen",
+          "addend": -4
+        },
+        {
+          "at": 51,
+          "kind": "pc32",
+          "to": "got:GUI_assistantViewOpen",
+          "addend": -4
+        },
+        {
+          "at": 64,
+          "kind": "pc32",
+          "to": "got:GUI_assistantVoiceActive",
+          "addend": -4
+        },
+        {
+          "at": 77,
+          "kind": "pc32",
+          "to": "got:GUI_voiceRecAsPlainText",
+          "addend": -4
+        }
+      ],
+      "entries": {
+        "press": 3,
+        "held": 19
+      }
+    }
+  ]
+}

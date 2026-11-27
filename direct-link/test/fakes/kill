@@ -1,0 +1,6 @@
+#!/bin/bash
+# fake kill: never signals anything; -HUP of a fake runsvdir tells it to exit.
+. "$(dirname "$0")/_lib.sh"
+log "kill $*"
+[ "$1" = -HUP ] && : >"$st/hup-$2"
+exit 0

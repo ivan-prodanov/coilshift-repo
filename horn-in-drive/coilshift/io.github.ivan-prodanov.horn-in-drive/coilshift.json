@@ -1,0 +1,24 @@
+{
+    "schema": 1,
+    "id": "io.github.ivan-prodanov.horn-in-drive",
+    "version": "1.2.0",
+    "sdk": ">=1.0 <2",
+    "title": "Horn in Drive",
+    "summary": "Makes the Boombox Horn Sound and Replace Horn toggles work in Drive like in Park, so your horn sound plays when you honk in gear, and can keep Horn Sound on across UI restarts. Also shows Replace Horn outside the US, Canada and Mexico. Replace Horn silences the real horn.",
+    "capabilities": [
+        "byte_rules:browser-ui"
+    ],
+    "settings": [
+        {
+            "id": "keep_toggles",
+            "type": "bool",
+            "default": true,
+            "title": "Keep horn toggles on after a UI restart",
+            "summary": "Stock firmware turns Horn Sound and Replace Horn off whenever the touchscreen restarts (e.g. after a CoilShift install) or the car crosses a saved location. On keeps them as you set them. Replace Horn still resets on a restart: the car never saves it.",
+            "group": "Horn"
+        }
+    ],
+    "byte_rules": [
+        "rules/horn_in_drive.json"
+    ]
+}

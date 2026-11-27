@@ -1,0 +1,18 @@
+{
+  "base": "672117cceff23d6b42fa63a5",
+  "frames": [
+    {
+      "frame": "4ecdb0aa9fd5bb7fd7e356bcd53dd94f9d789e",
+      "plaintext": "807b7d"
+    },
+    {
+      "frame": "08ad81693e0b70093cc266381c54b754fc",
+      "plaintext": "82"
+    },
+    {
+      "frame": "a903b324f22e1fc68312314bd68f2791ee1b9e4e668f31a18e8b1e13d64e83a180a97ccbb28f66d9935d32adf390d620e9f3858eb1ca5369ff",
+      "plaintext": "a007070707070707070707070707070707070707070707070707070707070707070707070707070707"
+    }
+  ],
+  "key": "91ad4f4bc12fc638eef86d712386ebe2b6020295961ce981d8197292e0835421"
+}

@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "io.github.ivan-prodanov.netflix-cdm",
+  "version": "1.0.0",
+  "sdk": ">=1.0 <2",
+  "title": "Netflix fix - OLD FIRMWARE ONLY (browser too old)",
+  "summary": "ONLY FOR OLD FIRMWARE WHERE THE BROWSER IS TOO OLD: Netflix shows 'browser too old' (E109), e.g. 2026.8.6 with Widevine 4.10.2934. Binds Widevine CDM 4.10.3050 into the Netflix sandbox and sets a clean Chrome UA. Does nothing on firmware that already has it.",
+  "requires": {
+    "packages": [
+      "dev.coilshift.qtcar-host",
+      "dev.coilshift.theater-webapps"
+    ]
+  },
+  "capabilities": [
+    "image.mount",
+    "bind",
+    "overlay"
+  ],
+  "payloads": [
+    {
+      "path": "payload/widevine-3050.sqfs",
+      "sha256": "6a528d5deb7a01c7388f9d24aff6c246daf5d161fc415fa23e64a456c57f48ef",
+      "size": 17260544
+    }
+  ],
+  "hooks": {
+    "apply": [
+      {
+        "id": "apply",
+        "run": "hooks/apply.sh",
+        "rerun": "in-place",
+        "phase": "late",
+        "after_restart": true,
+        "timeout": 180,
+        "after": [
+          "dev.coilshift.theater-webapps"
+        ]
+      }
+    ],
+    "remove": {
+      "run": "hooks/remove.sh",
+      "timeout": 60
+    }
+  }
+}

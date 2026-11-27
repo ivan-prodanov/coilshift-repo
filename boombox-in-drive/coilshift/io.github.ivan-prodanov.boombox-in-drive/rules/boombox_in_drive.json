@@ -1,0 +1,39 @@
+{
+  "schema": 2,
+  "role": "browser-ui",
+  "live": "hot",
+  "sites": [
+    {
+      "name": "updateButtonStates isCarParked gate: sound-dropdown path",
+      "scope": {"symbol": "_ZN23ExternalSpeakerSettings18updateButtonStatesEv"},
+      "patched": "refuse",
+      "forms": [
+        {"find": "31ffe8????????488b", "span": [2, 7], "replace": "b801000000"}
+      ]
+    },
+    {
+      "name": "updateButtonStates isCarParked gate: in-call path A",
+      "scope": {"symbol": "_ZN23ExternalSpeakerSettings18updateButtonStatesEv"},
+      "patched": "refuse",
+      "forms": [
+        {"find": "31ffe8????????3c01", "span": [2, 7], "replace": "b801000000"}
+      ]
+    },
+    {
+      "name": "updateButtonStates isCarParked gate: in-call path B",
+      "scope": {"symbol": "_ZN23ExternalSpeakerSettings18updateButtonStatesEv"},
+      "patched": "refuse",
+      "forms": [
+        {"find": "f631ffe8????????84c075", "span": [3, 8], "replace": "b801000000"}
+      ]
+    },
+    {
+      "name": "updateButtonStates isCarParked gate: not-in-call button path",
+      "scope": {"symbol": "_ZN23ExternalSpeakerSettings18updateButtonStatesEv"},
+      "patched": "refuse",
+      "forms": [
+        {"find": "f631ffe8????????84c074", "span": [3, 8], "replace": "b801000000"}
+      ]
+    }
+  ]
+}

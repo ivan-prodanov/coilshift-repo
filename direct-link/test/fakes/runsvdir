@@ -1,0 +1,9 @@
+#!/bin/bash
+# fake runsvdir -P DIR: shows itself in <root>/proc/<pid>/cmdline and runs until HUPed (fake kill).
+. "$(dirname "$0")/_lib.sh"
+log "runsvdir $* ($$)"
+mkdir -p "$root/proc/$$"
+printf '%s\0-P\0%s\0' "$0" "$2" >"$root/proc/$$/cmdline" # argv[0] as really given (a path)
+until [ -e "$st/hup-$$" ]; do sleep 0.2; done
+rm -rf "$root/proc/$$" "$st/hup-$$"
+exit 111

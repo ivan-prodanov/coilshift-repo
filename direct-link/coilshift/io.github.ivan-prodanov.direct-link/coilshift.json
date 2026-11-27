@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "id": "io.github.ivan-prodanov.direct-link",
+  "version": "1.0.0",
+  "sdk": ">=1.0 <2",
+  "title": "Direct Link",
+  "summary": "Live camera, talk through the car's speaker and dashcam clips on your phone, via your own Raspberry Pi instead of Tesla's servers. Needs the companion app and Pi. Runs its own runit supervisor (runsvdir, sv) and an iptables owner chain so the gateway reaches only the Pi.",
+  "capabilities": [
+    "service",
+    "image.mount",
+    "bind"
+  ],
+  "payloads": [
+    {
+      "path": "payload/direct-link-eccb2c4.sqfs",
+      "sha256": "b620acb612d01362b5dd601f85aa503005c5920b88429afeac27b8dd57084278",
+      "size": 9908224
+    }
+  ],
+  "hooks": {
+    "apply": [
+      {
+        "id": "apply",
+        "run": "hooks/apply.sh",
+        "rerun": "in-place",
+        "phase": "late",
+        "timeout": 300
+      }
+    ],
+    "service": [
+      {
+        "id": "supervise",
+        "run": "bin/supervise.sh",
+        "restart": "always"
+      }
+    ],
+    "remove": {
+      "run": "hooks/remove.sh",
+      "timeout": 120
+    }
+  }
+}
