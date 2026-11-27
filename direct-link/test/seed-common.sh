@@ -7,7 +7,8 @@ seed_car() {
     mkdir -p "$root/.fakes/state" "$root/proc/sys/kernel/random" "$root/proc/self" "$root/usr/bin" \
         "$root/etc/sv/webrtc-comms" "$root/var/lib/airgapp-gw/state" "$root/var/lib/airgapp-camhelper/svlog" \
         "$root/var/lib/airgapp-gw/svlog/agw" "$root/var/lib/airgapp-gw/svlog/summonhelper" \
-        "$root/var/lib/airgapp-summon/state" "$root/var/etc"
+        "$root/var/lib/airgapp-summon/state" "$root/var/etc" \
+        "$root/var/lib/coilshift/pkgs/dev.coilshift.tailscale"
     cp "$fakes"/* "$root/.fakes/"
     echo 6a1c0b5e-0000-4000-8000-000000000001 >"$root/proc/sys/kernel/random/boot_id"
     : >"$root/proc/self/mounts"

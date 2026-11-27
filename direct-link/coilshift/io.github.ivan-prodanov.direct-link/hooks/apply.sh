@@ -1,13 +1,15 @@
 #!/bin/bash
 # Direct Link apply (late, every boot, and in place on an update): what
 # `install-car.sh --after-boot` did by hand, unattended (direct-link/DESIGN.md).
-#   1. refuse while today's install-car.sh supervisor runs (migrate first), and a bad
+#   1. refuse while today's install-car.sh supervisor runs (migrate first), or without
+#      CoilShift's Tailscale (agw serves the car's tailnet address), and fail on a bad
 #      direct-link.conf, before anything changes;
 #   2. mount the image, check agw and camhelper against lib/gateway.sh, bind them at
 #      /run/direct-link-bin, and check uid 4950 can run agw there;
 #   3. first run only: the state and key a fresh car lacks (nothing that exists is
 #      touched);
-#   4. the uid 4950 egress lock (IPv4: TCP to PI_IP:17101 on wlan0, then DROP; IPv6: DROP),
+#   4. the uid 4950 egress lock (IPv4: only agw's replies on tailscale0 from :17100, then DROP;
+#      IPv6: DROP),
 #      jumped to first in OUTPUT; without it no agw service is written;
 #   5. agw's and camhelper's runit scripts (install-car.sh's, binary paths changed), linked
 #      into our svdir, bound at /run/direct-link-sv;
@@ -27,20 +29,19 @@ notes=
 if installer_live; then
     refuse "install-car.sh's own supervisor is running: migrate first (direct-link README)"
 fi
+tailscale_present || refuse "Tailscale is not installed: install CoilShift's Tailscale package first"
 # direct-link.conf: made once from today's installed scripts (or the defaults), then the
 # owner's to edit over SSH. It is never a CoilShift setting: nothing on the drive path is.
+# A PI_IP line a 1.0 package wrote is ignored: nothing dials the Pi any more.
 if [ ! -f "$R$CONF" ]; then
-    pi=$(sed -n 's/.* -dial "\([0-9.]*\):[0-9]*".*/\1/p' "$R$GW_DIR/sv/agw/run" 2>/dev/null | head -n 1)
     wr=$(sed -n 's/.* -writer \([a-z-]*\).*/\1/p' "$R$GW_DIR/sv/camhelper/run" 2>/dev/null | head -n 1)
     mkdir -p "$R$GW_DIR"
-    printf '# Direct Link: edit over SSH, then re-apply (reboot, or update the package).\nPI_IP=%s\nHELPER_WRITER=%s\n' \
-        "${pi:-192.168.4.1}" "${wr:-pw-cat}" >"$R$CONF"
+    printf '# Direct Link: edit over SSH, then re-apply (reboot, or update the package).\nHELPER_WRITER=%s\n' \
+        "${wr:-pw-cat}" >"$R$CONF"
     as_root "$R$CONF"
     chmod 0644 "$R$CONF"
 fi
-PI_IP=$(conf_get PI_IP)
 WRITER=$(conf_get HELPER_WRITER)
-why=$(check_ip "$PI_IP") || fail "direct-link.conf PI_IP: ${why:-missing}"
 case "$WRITER" in pw-cat|aplay) ;; *) fail "direct-link.conf HELPER_WRITER must be pw-cat or aplay" ;; esac
 
 # 2. binaries
@@ -67,7 +68,7 @@ fi
 mkdir -p "$R$HELPER_DIR"
 
 # 4. egress lock
-egress_lock "$IPT" "$(egress_accept_rule "$PI_IP")" >/dev/null 2>&1 \
+egress_lock "$IPT" "$(egress_accept_rule)" >/dev/null 2>&1 \
     && egress_lock "$IP6T" >/dev/null 2>&1 \
     || fail "the uid $UID_GW egress lock did not check out; agw not started"
 
@@ -80,7 +81,7 @@ fi
 # 5. services
 pin=$(authd_pin)
 [ -n "$pin" ] || notes="${notes:+$notes; }unknown authd build: camera sign-in stays closed; run the sign-in pre-check, then a new package version adds it"
-gen_agw_scripts "$PI_IP"
+gen_agw_scripts
 gen_helper_scripts "$WRITER" "$pin"
 write_service agw "$AGW_RUN" "$AGW_FINISH" "$AGW_LOG" "Direct Link"
 write_service camhelper "$HELPER_RUN" "$HELPER_FINISH" "$HELPER_LOG" "Direct Link"

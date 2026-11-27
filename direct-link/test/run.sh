@@ -2,7 +2,8 @@
 # direct-link/test/run.sh: the checks tools/build.sh can't make (it runs the harness kinds).
 #
 #   1. templates: our run/finish/log scripts equal install-car.sh's (at the gateway commit in
-#      lib/gateway.sh) for the same inputs, apart from the binary paths and the generator name;
+#      lib/gateway.sh) for the same inputs, apart from the binary paths and the generator name,
+#      and agw's run script's direct-mode change (spelled out below);
 #   2. shared files: direct-summon's copies of the shared files are byte-identical;
 #   3. supervise.sh: marker wait, double-start refusal, stop order, take-it-back, on fakes only.
 #
@@ -53,10 +54,24 @@ same() { # NAME EXPECTED ACTUAL
     else bad "template $1"; diff <(printf '%s\n' "$2") <(printf '%s\n' "$3") | sed 's/^/     /' || true; fi
 }
 pin=$(printf 'a%.0s' $(seq 64))
-for ip in 192.168.4.1 10.1.2.3; do
-    exp=$(AGW_SCRIPTS_ONLY=1 PI_IP=$ip sh "$inst" ./agw)
-    same "agw ($ip)" "$exp" "$(ours gen_agw_scripts "$ip")"
-done
+# agw's run script is the one deliberate departure (direct mode): the installer's, with the
+# tailscale0 wait added and `serve -tailnet` instead of `serve -dial PI_IP:17101`. Its finish
+# is still the installer's.
+exp=$(AGW_SCRIPTS_ONLY=1 PI_IP=192.168.4.1 sh "$inst" ./agw | awk '
+    /serve -dial "192\.168\.4\.1:17101"/ {
+        print "if [ ! -e /sys/class/net/tailscale0 ]; then"
+        print "\techo \"agw run: tailscale0 is not up yet (Tailscale); waiting\""
+        print "\tsleep 5"
+        print "\texit 1"
+        print "fi"
+        sub(/serve -dial "192\.168\.4\.1:17101"/, "serve -tailnet")
+    }
+    { print }')
+same "agw (tailnet)" "$exp" "$(ours gen_agw_scripts)"
+case "$(ours gen_agw_scripts)" in
+*'-dial'*|*17101*) bad "agw run still names the Pi" ;;
+*) ok "agw run names no Pi" ;;
+esac
 for w in pw-cat aplay; do
     for p in "" "$pin"; do
         exp=$(AGW_HELPER_RUN_ONLY=1 HELPER_WRITER=$w AUTHD_SHA256=$p sh "$inst")
@@ -75,6 +90,33 @@ for p in "" "$pin"; do
 done
 exp=$(sh -c "$(sed -n '/^log_run() {$/,/^}$/p' "$inst"); log_run agw /var/lib/airgapp-gw/svlog/agw")
 same "log run" "$exp" "$(ours log_run agw /var/lib/airgapp-gw/svlog/agw 'Direct Link')"
+
+# ---- 1b. the egress lock on an update from 1.0 (fakes only) ----
+# A 1.0 car has the Pi rule; apply's egress_lock must leave exactly the tailnet reply rule and
+# the DROP, with the jump first in OUTPUT, and a second run must change nothing.
+er=$work/egress
+mkdir -p "$er/.fakes/state"
+cp "$here"/fakes/* "$er/.fakes/"
+printf 'AIRGAPP_GW_OUT\n' >"$er/.fakes/state/iptables.chains"
+printf '%s\n' '-A OUTPUT -m owner --uid-owner 4950 -j AIRGAPP_GW_OUT' \
+    '-A OUTPUT -m owner --uid-owner 1000 -j TESLA_EXAMPLE_OUT' \
+    '-A AIRGAPP_GW_OUT -o wlan0 -d 192.168.4.1 -p tcp --dport 17101 -j ACCEPT' \
+    '-A AIRGAPP_GW_OUT -j DROP' >"$er/.fakes/state/iptables.rules"
+lock() {
+    ( CSDK_FAKE_ROOT=$er CSDK_RUN=$work/run CSDK_PKG=test; export CSDK_FAKE_ROOT CSDK_RUN
+      # shellcheck source=/dev/null
+      . "$DL/lib/common.sh"
+      egress_lock "$IPT" "$(egress_accept_rule)" )
+}
+want='-A OUTPUT -m owner --uid-owner 4950 -j AIRGAPP_GW_OUT
+-A OUTPUT -m owner --uid-owner 1000 -j TESLA_EXAMPLE_OUT
+-A AIRGAPP_GW_OUT -o tailscale0 -p tcp -m tcp --sport 17100 -m conntrack --ctstate ESTABLISHED -j ACCEPT
+-A AIRGAPP_GW_OUT -j DROP'
+if lock && [ "$(cat "$er/.fakes/state/iptables.rules")" = "$want" ]; then ok "egress lock: 1.0's Pi rule becomes the tailnet reply rule"
+else bad "egress lock from 1.0"; sed 's/^/     /' "$er/.fakes/state/iptables.rules"; fi
+before=$(cat "$er/.fakes/state/iptables.rules")
+if lock && [ "$(cat "$er/.fakes/state/iptables.rules")" = "$before" ]; then ok "egress lock: a second apply changes nothing"
+else bad "egress lock is not idempotent"; fi
 
 # ---- 2. shared files ----
 for f in lib/common.sh lib/csdk.sh lib/gateway.sh bin/supervise.sh; do

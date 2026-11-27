@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "id": "io.github.ivan-prodanov.direct-link",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "sdk": ">=1.0 <2",
   "title": "Direct Link",
-  "summary": "Live camera, talk through the car's speaker and dashcam clips on your phone, via your own Raspberry Pi instead of Tesla's servers. Needs the companion app and Pi. Runs its own runit supervisor (runsvdir, sv) and an iptables owner chain so the gateway reaches only the Pi.",
+  "summary": "Live camera, talk through the car's speaker and dashcam clips on your phone, straight from the car over your own Tailscale. Needs the companion app and CoilShift's Tailscale. Runs runit (runsvdir, sv) and an iptables owner chain: the gateway only answers the phone.",
   "capabilities": [
     "service",
     "image.mount",
@@ -12,9 +12,9 @@
   ],
   "payloads": [
     {
-      "path": "payload/direct-link-eccb2c4.sqfs",
-      "sha256": "b620acb612d01362b5dd601f85aa503005c5920b88429afeac27b8dd57084278",
-      "size": 9908224
+      "path": "payload/direct-link-80b14ad.sqfs",
+      "sha256": "9a1e9663dacf2636388e453f9c3afabc1567c9b3015d1ad242de39c7b8f95b6b",
+      "size": 9920512
     }
   ],
   "hooks": {

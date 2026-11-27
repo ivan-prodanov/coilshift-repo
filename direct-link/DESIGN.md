@@ -2,6 +2,11 @@
 
 **Status.** Draft for the owner's approval. Nothing here is built or published.
 
+**Superseded in part by direct mode (1.1.0, 2026-11-27).** agw no longer dials a Pi: it listens on the car's own
+tailnet address (`serve -tailnet`), the egress lock allows only agw's replies on `tailscale0` from port 17100, and
+`direct-link.conf` has no `PI_IP`. Everything below about `PI_IP`, `-dial` and port 17101 describes 1.0.x. See
+[README.md](README.md), "Direct mode".
+
 **Intent.** The owner asked on 2026-11-26 whether the car side "in its entirety" can be a CoilShift (CS) package. That is the
 gateway (agw), the camera helper (camhelper), the Summon helper (summonhelper) and the per-boot setup. Today:
 - these are installed over SSH with `deploy/install-car.sh` from the gateway repo (`~/Work/airgapp/gateway`, local only);

@@ -5,11 +5,22 @@ itself at every boot instead of `install-car.sh --after-boot` over SSH.
 
 - **Direct Link** (`io.github.ivan-prodanov.direct-link`): agw (the gateway, uid 4950) and
   camhelper (camera, talk, dashcam), plus the uid 4950 egress lock.
+
+**Direct mode (1.1.0, gateway `80b14ad`):** no Raspberry Pi in the path. agw listens on the
+car's own tailnet address (`serve -tailnet`: the IPv4 on `tailscale0`, port 17100), and the phone
+connects to it over Tailscale. The car's internet is its own (LTE). The car's firewall already
+accepts inbound on `tailscale0` (Tailscale's `ts-input`), and the Wi-Fi module's NAT does not
+apply to the tunnel. Access is unchanged: the phone proves its key, and authd must list it as
+OWNER or DRIVER. Traffic stays end-to-end encrypted to the car's key inside the Tailscale tunnel.
+The egress lock now lets uid 4950 send only its replies on `tailscale0` from port 17100, so agw
+cannot open a connection to anything. Needs CoilShift's Tailscale package: apply refuses without
+it. 1.0.x dialled out to a Pi at `PI_IP:17101`; that is gone.
 - **Direct Summon** (`io.github.ivan-prodanov.direct-summon`, folder `../direct-summon/`):
   summonhelper (uid 1337), which takes `com.tesla.Webrtc` from stock `webrtc-comms`.
 
-Built from gateway `eccb2c4` (the car still runs `d91f0e1` from install-car.sh, feat/no-allowlist: no allowlist, first-connect pairing), and the same runit run, finish and
-log scripts, apart from the binary paths (`test/run.sh` proves it against `install-car.sh`).
+Built from gateway `80b14ad` (`eccb2c4` plus `serve -tailnet`; camhelper and summonhelper are
+byte-identical to `eccb2c4`'s), and the same runit run, finish and log scripts, apart from the
+binary paths and agw's direct-mode run line (`test/run.sh` proves it against `install-car.sh`).
 Design: [DESIGN.md](DESIGN.md). Plan: [PLAN.md](PLAN.md).
 
 **Public repo.** This README may name car paths; never the VIN, the tailnet name or the phone key (those live in `local.env`).
@@ -17,6 +28,9 @@ Design: [DESIGN.md](DESIGN.md). Plan: [PLAN.md](PLAN.md).
 ## Status
 
 Published 2026-11-27 (1.0.0, gateway `eccb2c4`) at `https://ivan-prodanov.github.io/coilshift-repo/`, by the owner's go-ahead.
+Direct mode (Direct Link 1.1.0 + Direct Summon 1.0.2, gateway `80b14ad`): built and tested
+2026-11-27, **not published**. The phone app needs the matching build (it connects to the car's
+tailnet name instead of the Pi), so update the car and the app together.
 **Not installed on the car yet** (migration below). The gateway's Go source has not reached Lupine yet (Author Agreement §3.2).
 
 ## What runs where on the car
@@ -27,10 +41,11 @@ Published 2026-11-27 (1.0.0, gateway `eccb2c4`) at `https://ivan-prodanov.github
 | runit service dirs | `/run/direct-link-sv/{agw,camhelper}`, `/run/direct-summon-sv/summonhelper` (each package's `$CSDK_RUN/sv`, bound) |
 | Supervisor | each package's CoilShift service `supervise` runs its own `runsvdir -P $CSDK_RUN/svdir` |
 | Keys, logs | as today: `/var/lib/airgapp-gw/{state,svlog}`, `/var/lib/airgapp-camhelper/svlog`, `/var/lib/airgapp-summon/state` |
-| Config | `/var/lib/airgapp-gw/direct-link.conf`: `PI_IP` (default 192.168.4.1) and `HELPER_WRITER` (`pw-cat` or `aplay`) |
+| Config | `/var/lib/airgapp-gw/direct-link.conf`: `HELPER_WRITER` (`pw-cat` or `aplay`); a 1.0 `PI_IP` line is ignored |
+| Network | agw on the IPv4 of `tailscale0`, port 17100; nothing else listens or dials |
 
 `direct-link.conf` is made at the first apply from today's installed scripts (so a migrated car
-keeps its Pi address and writer), then it is yours to edit over SSH; it takes effect at the next
+keeps its writer), then it is yours to edit over SSH; it takes effect at the next
 apply (a reboot, or an update). It is deliberately not a CoilShift setting.
 
 The camera and Summon sign-in pin is chosen from the authd builds the sign-in pre-check proved
@@ -41,11 +56,11 @@ camera runbook's step 2b, add its hash in `build-payloads.sh`, rebuild, publish 
 ## Build and test (this repo)
 
 The gateway's Go source (agw, camhelper, summonhelper) is in [`../gateway/`](../gateway/), at the commit the
-packages are built from (`eccb2c4`; added with `git subtree --squash` from the local gateway repo, update with
+packages are built from (`80b14ad`; added with `git subtree --squash` from the local gateway repo, update with
 `git subtree pull --prefix=gateway <gateway repo> <branch> --squash`). The build uses only this repo.
 
 ```bash
-direct-link/build-payloads.sh eccb2c4 <agw sha256> <camhelper sha256> <summonhelper sha256>
+direct-link/build-payloads.sh 80b14ad <agw sha256> <camhelper sha256> <summonhelper sha256>
 direct-link/test/run.sh
 tools/build.sh
 ```
@@ -54,8 +69,8 @@ tools/build.sh
   downloaded), refuses unless the binaries are the reviewed ones, packs both images
   deterministically, scans them for leaks, and writes `lib/gateway.sh` and both manifests'
   `payloads`. The hashes are those of the reviewed commit's own `make car`.
-- `test/run.sh`: the generated scripts equal `install-car.sh`'s for the same inputs (path map
-  only); the shared files are identical in both packages; `bin/supervise.sh` on fakes (marker
+- `test/run.sh`: the generated scripts equal `install-car.sh`'s for the same inputs (path map,
+  plus agw's tailnet run line, spelled out in the test); the shared files are identical in both packages; `bin/supervise.sh` on fakes (marker
   wait, stop order, runsvdir death, leftover runsvdir, take-it-back rate limit).
 - `tools/build.sh`: lint, and the harness kinds of both `harness-seed.sh` files.
 - Shared files (`lib/common.sh`, `lib/csdk.sh`, `lib/gateway.sh`, `bin/supervise.sh`): edit
@@ -84,11 +99,22 @@ The keys are unchanged, so the phone needs nothing. The old binaries in
 
 ## Checks after an install, an update or a reboot
 
-- `cat /run/direct-link-bin/BUILD /run/direct-summon-bin/BUILD`: `build eccb2c4` in both.
+- `cat /run/direct-link-bin/BUILD /run/direct-summon-bin/BUILD`: `build 80b14ad` in both.
 - `sha256sum /run/direct-link-bin/agw /run/direct-link-bin/camhelper /run/direct-summon-bin/summonhelper`: the reviewed hashes.
 - `sv status /run/direct-link-sv/* /run/direct-summon-sv/*`: all `run:`.
 - `iptables -S OUTPUT | grep -m1 '^-A'`: the jump to `AIRGAPP_GW_OUT`.
-- `tail -n 3 /var/lib/airgapp-gw/svlog/agw/current`: "bus self-test passed", "dialing the Pi".
+- `iptables -S AIRGAPP_GW_OUT`: the `-o tailscale0 ... --sport 17100 ... ESTABLISHED -j ACCEPT`
+  rule, then `-j DROP`, nothing else.
+- `tail -n 3 /var/lib/airgapp-gw/svlog/agw/current`: "bus self-test passed", "listening on the tailnet at".
+- `ss -ltn | grep -c ':17100 '`: 1 (the tailnet address only).
+
+## Update from 1.0.x to direct mode
+
+Car parked, no Summon session open. In CoilShift, update Direct Link to 1.1.0, then Direct Summon
+to 1.0.2 (Direct Summon refuses a Direct Link of another build, so it waits for the first). The
+apply rewrites the egress lock (the Pi rule goes) and agw's run script, and restarts agw. Then the
+checks above. Install the matching phone build; the car's key is unchanged, so the phone's pinned
+identity still matches and there is no Re-pair.
 - `grep -c 'live file /run/airgapp-summon/live' /var/lib/airgapp-gw/svlog/summonhelper/current`: 1 or more.
 - Then with Summon open on the phone (no press): today's step 7 checks (presence lease on, the
   live file, its flock, SUMMON mode). No motion checks without the owner.
