@@ -2,10 +2,14 @@
 // that writes the camera DataValues and spawns the capture, talk and cut
 // children. It serves the gateway uid on a unix socket, and on a second one
 // (auth.sock, same directory) answers the gateway's sign-in questions from
-// authd's KeyInfo, so the gateway uid needs no system bus access.
+// authd's KeyInfo, so the gateway uid needs no system bus access. On a third
+// (cmd.sock, same directory) it relays the phone's signed vehicle-command
+// messages to the car's command-router and the replies back (Direct commands,
+// internal/cmdrelay).
 //
 //	camhelper run   [flags]   serve (as root; under runit)
 //	camhelper sweep [flags]   one-shot: clear what a previous run left marked (runit finish)
+//	camhelper cmd-inject      the Direct commands injector child (started by run, as the authd user)
 //
 // See docs/CAMERA-HELPER.md.
 package main
@@ -20,6 +24,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,6 +35,7 @@ import (
 	"airgapp/gateway/internal/authority"
 	"airgapp/gateway/internal/authsrv"
 	"airgapp/gateway/internal/camhelper"
+	"airgapp/gateway/internal/cmdrelay"
 )
 
 const defaultState = "/run/airgapp-camhelper-state"
@@ -64,6 +70,14 @@ func dbusOracle(pin string) (authsrv.Oracle, error) {
 }
 
 func run(ctx context.Context, args []string, stderr io.Writer) int {
+	if len(args) == 1 && args[0] == "cmd-inject" {
+		// The injector child: no flags, no root (run starts it as the authd user). It ends when its stdin does.
+		if err := cmdrelay.RunChild(os.Stdin, os.Stdout, nil); err != nil {
+			fmt.Fprintln(stderr, "camhelper cmd-inject:", err)
+			return 1
+		}
+		return 0
+	}
 	if len(args) == 0 || (args[0] != "run" && args[0] != "sweep") {
 		fmt.Fprintln(stderr, "usage: camhelper run|sweep [flags]")
 		return 2
@@ -80,6 +94,8 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	writer := fs.String("writer", string(camhelper.WriterPWCat), "talk writer: pw-cat (default) or aplay")
 	teslacam := fs.String("teslacam", "/mnt/usb/TeslaCam", "clip root")
 	authSock := fs.String("auth-sock", authproto.DefaultSocket, "the sign-in socket (same directory as -sock)")
+	cmdSock := fs.String("cmd-sock", "", "the Direct commands socket (default: cmd.sock next to -sock; off = no relay)")
+	injectUser := fs.String("inject-user", "authd", "the user the command-router accepts RouteFromAuthd from")
 	summonLive := fs.String("summon-live", camhelper.DefaultSummonLive, "summonhelper's live file (SUMMON mode's trust signal)")
 	summonUID := fs.Int("summon-uid", camhelper.DefaultSummonUID, "summonhelper's uid: the only owner of the live file and its dir")
 	authdPin := fs.String("authd-sha256", authority.DefaultAuthdSHA256,
@@ -98,6 +114,15 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 		if err == nil && filepath.Dir(*authSock) != filepath.Dir(*sock) {
 			err = fmt.Errorf("-auth-sock %s must be in -sock's directory %s", *authSock, filepath.Dir(*sock))
 		}
+		switch *cmdSock {
+		case "":
+			*cmdSock = filepath.Join(filepath.Dir(*sock), filepath.Base(cmdrelay.DefaultSocket))
+		case "off":
+			*cmdSock = ""
+		}
+		if err == nil && *cmdSock != "" && filepath.Dir(*cmdSock) != filepath.Dir(*sock) {
+			err = fmt.Errorf("-cmd-sock %s must be in -sock's directory %s", *cmdSock, filepath.Dir(*sock))
+		}
 		if err == nil && !isPin(*authdPin) {
 			err = fmt.Errorf("-authd-sha256 must be 64 lowercase hex digits, got %q", *authdPin)
 		}
@@ -113,7 +138,8 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 		gs, err = parseGroups(*groups)
 		if err == nil {
 			err = serve(ctx, serveConfig{
-				state: *state, sock: *sock, authSock: *authSock, authdPin: *authdPin, gwUID: *gwUID, gwGID: *gwGID,
+				state: *state, sock: *sock, authSock: *authSock, cmdSock: *cmdSock, injectUser: *injectUser,
+				authdPin: *authdPin, gwUID: *gwUID, gwGID: *gwGID,
 				cred:   &syscall.Credential{Uid: uint32(*childUID), Gid: uint32(*childGID), Groups: gs},
 				writer: camhelper.WriterKind(*writer), teslacam: *teslacam, log: lg,
 				summonLive: *summonLive, summonUID: *summonUID,
@@ -217,6 +243,8 @@ func sweep(state string, lg *log.Logger) error {
 type serveConfig struct {
 	state, sock  string
 	authSock     string
+	cmdSock      string // "" = no Direct commands relay
+	injectUser   string
 	authdPin     string
 	gwUID, gwGID int
 	cred         *syscall.Credential
@@ -274,6 +302,8 @@ func serve(ctx context.Context, c serveConfig) error {
 		asrv.Shutdown()
 		os.Remove(c.authSock)
 	}()
+	stopCmd := startCmdRelay(ctx, c)
+	defer stopCmd()
 	srv := camhelper.New(camhelper.Config{
 		Car: car, Spawner: camhelper.ExecSpawner{Cred: c.cred}, StateDir: c.state,
 		TeslaCam: c.teslacam, AllowUID: c.gwUID, Writer: c.writer, Log: c.log,
@@ -328,4 +358,64 @@ func listenUnix(path string, gid int) (net.Listener, error) {
 		return nil, err
 	}
 	return ln, nil
+}
+
+// Test hook: the injector user's credentials (os/user reads /etc/passwd; the binary is static).
+var lookupUser = func(name string) (*syscall.Credential, error) {
+	u, err := user.Lookup(name)
+	if err != nil {
+		return nil, err
+	}
+	uid, err1 := strconv.Atoi(u.Uid)
+	gid, err2 := strconv.Atoi(u.Gid)
+	if err1 != nil || err2 != nil {
+		return nil, fmt.Errorf("user %s: bad uid/gid", name)
+	}
+	return &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}, nil
+}
+
+// startCmdRelay starts the Direct commands relay (internal/cmdrelay) on c.cmdSock: the root bus monitor, the injector
+// child (this binary's cmd-inject, as c.injectUser) and the listener. Nothing about it can stop camhelper: every
+// failure is logged and the relay is simply off. The returned func stops it.
+func startCmdRelay(ctx context.Context, c serveConfig) func() {
+	if c.cmdSock == "" {
+		return func() {}
+	}
+	cred, err := lookupUser(c.injectUser)
+	if err != nil {
+		c.log.Printf("Direct commands off: %v", err)
+		return func() {}
+	}
+	self, err := os.Executable()
+	if err != nil {
+		c.log.Printf("Direct commands off: %v", err)
+		return func() {}
+	}
+	ln, err := listenUnix(c.cmdSock, c.gwGID)
+	if err != nil {
+		c.log.Printf("Direct commands off: %v", err)
+		return func() {}
+	}
+	inj := &cmdrelay.ExecInjector{Path: self, Args: []string{"cmd-inject"}, Cred: cred, Log: c.log}
+	relay := cmdrelay.New(cmdrelay.Config{AllowUID: c.gwUID, Inject: inj, Log: c.log})
+	mctx, stopMon := context.WithCancel(ctx)
+	monDone := make(chan struct{})
+	go func() {
+		defer close(monDone)
+		(&cmdrelay.Monitor{Deliver: relay.Deliver, SetUp: relay.SetMonitorUp, Log: c.log}).Run(mctx)
+	}()
+	go func() {
+		if err := relay.Serve(ln); err != nil {
+			c.log.Printf("Direct commands socket: %v", err)
+		}
+	}()
+	c.log.Printf("Direct commands on %s (injector as %s uid %d)", c.cmdSock, c.injectUser, cred.Uid)
+	return func() {
+		relay.Shutdown()
+		ln.Close()
+		stopMon()
+		<-monDone
+		inj.Close()
+		os.Remove(c.cmdSock)
+	}
 }

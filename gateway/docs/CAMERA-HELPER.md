@@ -14,6 +14,7 @@ protocol is `docs/CAMERA-PROTOCOL.md`.
 | socket dir | `/run/airgapp-camhelper/` | root:4950 0750 (created by the helper at start) |
 | socket | `/run/airgapp-camhelper/camhelper.sock` | root:4950 0660; only peer uid 4950 is served (SO_PEERCRED) |
 | sign-in socket | `/run/airgapp-camhelper/auth.sock` | root:4950 0660; only peer uid 4950 is served (see "Sign-in socket") |
+| Direct commands socket | `/run/airgapp-camhelper/cmd.sock` | root:4950 0660; only peer uid 4950 is served (see "Direct commands relay") |
 | state dir | `/run/airgapp-camhelper-state/` | root:root 0711: markers (0600), `lock`, `children.json` |
 | cut dir | `/run/airgapp-camhelper-state/cut/` | 4951:4951 0700 (ffmpeg output) |
 | log | `/var/lib/airgapp-camhelper/svlog/` | root 0750: svlogd, 3 files of 1 MB |
@@ -220,6 +221,20 @@ reaches the bus: `KeyInfo` takes no arguments, and pk is only compared with auth
 
 dbus-daemon caches a uid's lookup for its lifetime: a uid that once resolved (for example during the 2026-11-20
 overlay test) keeps connecting until the car reboots or the bus reloads its configuration.
+
+## Direct commands relay (`internal/cmdrelay`, 2026-11-27)
+
+A third listener, `cmd.sock` next to `-sock` (`-cmd-sock off` disables it). It relays a signed-in phone's own signed
+vehicle-command messages (`universalmessage.RoutableMessage`, what the phone would send over BLE) to the car's
+command-router and the router's replies back; agw's VCMD capability is its only client. Mechanism and limits:
+`docs/CAPABILITY-API.md` (VCMD) and the package comment of `internal/cmdrelay`.
+
+- **In:** a long-lived child, `camhelper cmd-inject`, started as the `-inject-user` (default `authd`, looked up in
+  `/etc/passwd`), calls `com.tesla.CommandRouter.RouteFromAuthd(ay)`. The D-Bus policy lets only authd call it.
+- **Out:** a root D-Bus monitor (`BecomeMonitor`) on `com.tesla.Auth.RouteMessageBytes`; authd logs and drops the
+  same replies. Nothing reaches Tesla's servers.
+- **Never fatal:** no injector user, no socket or no bus only logs "Direct commands off" or "monitor down".
+  Camera, talk, dashcam and sign-in are never affected.
 
 ## Children (every argv fixed, no shell)
 

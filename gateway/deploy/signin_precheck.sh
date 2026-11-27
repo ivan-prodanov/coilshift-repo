@@ -20,10 +20,10 @@ ST=/run/airgapp-signin-precheck
 SOCKD=/run/airgapp-signin-precheck-sock
 # The owner phone key (130 hex, uncompressed P-256), passed by the caller: never kept in this repo.
 case ${PHONE:-} in 04*) ;; *) echo "set PHONE=<phone public key hex> (see the usage line)" >&2; exit 2 ;; esac
-# The build installed next: the 2026-11-26 review fixes (gateway feat/summon-review-fixes 5dd87c6, camera + Summon;
-# docs/SUMMON.md "Installing the 2026-11-26 review fixes"). The car ran 841d3df before it (agw 07cf4a48, camhelper
-# d8cc4662).
-WANT_AGW=f4ef404bc954f301984ecaff70875a0963375d8660d866c667fda301a206423e
+# The build on the car since 2026-11-27: gateway feat/camera-capabilities 80b14ad, run by CoilShift's Direct Link
+# package in direct mode (agw serve -tailnet; tesla-dump/docs/direct-mode-no-pi-2026-11-27.md). camhelper is the
+# review-fix build's (5dd87c6); before it the car ran 841d3df (agw 07cf4a48, camhelper d8cc4662).
+WANT_AGW=154140fe53a0fc4511a1ac1e696bf4816df36909d58a4722f9f8501aacb06fd4
 WANT_CH=6c24978b153ade7fbc1733cf5aceab28969661df01e945e04833d77912ed9d6e
 PIN_86=33d62d9e818afcb9b4a4af8cec6ecda2ff1801c5a667bd527e39a2b4f6f477e9
 PIN_386=e0c74323da8f638b2d21d823cd989e0f6b43dfcf24b9db3e68aa9520057c1c0f

@@ -136,7 +136,7 @@ func TestGridFrontTileOn9895(t *testing.T) {
 		t.Fatalf("front tile %s", s)
 	}
 	s := r.lastStreams()
-	if len(s.Streams) != 6 || s.Focus != "front" {
+	if len(s.Streams) != 4 || s.Focus != "front" { // no pillars
 		t.Fatalf("grid %+v", s)
 	}
 	for i, st := range s.Streams {
@@ -227,7 +227,7 @@ func TestDewarpOnlyOnTheWindshieldUltrawide(t *testing.T) {
 		}
 	}
 	r.h.Frame(TSelect, []byte(`{"view":"grid"}`))
-	waitFor(t, "grid", func() bool { s := r.lastStreams(); return s.View == "grid" && len(s.Streams) == 6 })
+	waitFor(t, "grid", func() bool { s := r.lastStreams(); return s.View == "grid" && len(s.Streams) == 4 })
 	if raw := r.lastStreamsRaw(); strings.Count(raw, `"dewarp":true`) != 1 {
 		t.Fatalf("grid %s", raw)
 	}

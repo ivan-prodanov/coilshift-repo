@@ -534,7 +534,7 @@ func TestGrid(t *testing.T) {
 	}
 	waitFor(t, "grid STREAMS", func() bool { return r.lastStreams().View == "grid" })
 	s := r.lastStreams()
-	if s.View != "grid" || s.Focus != "rear" || len(s.Streams) != 6 {
+	if s.View != "grid" || s.Focus != "rear" || len(s.Streams) != 4 { // no pillars
 		t.Fatalf("streams %+v", s)
 	}
 	for i, st := range s.Streams {
@@ -712,7 +712,7 @@ func TestSelectableRefusedByHelper(t *testing.T) {
 	r.h.Frame(TSelect, []byte(`{"view":"grid"}`))
 	waitFor(t, "grid", func() bool { return r.lastStreams().View == "grid" })
 	s := r.lastStreams()
-	if len(s.Streams) != 5 || s.Streams[0].Index != 1 {
+	if len(s.Streams) != 3 || s.Streams[0].Index != 1 {
 		t.Fatalf("grid without the front tile %+v", s)
 	}
 	r.waitStatus("grid select_refused", func(s statusJSON) bool { return s.Reason == "select_refused" })

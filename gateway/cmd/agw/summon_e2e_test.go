@@ -825,7 +825,7 @@ func startSummonRig(t *testing.T, o summonOpts) *summonRig {
 	// agw: serve -dial to the Pi, with the real sign-in and the relay to the helper's socket.
 	_, _, r.agwLog, _ = startServe(t, "-bench", "-dial", r.pi.CarAddr(), "-auth-socket", authSock,
 		"-key", r.ph.keyPath, "-vin-file", r.ph.vinPath, "-log", r.sessionLogs[0])
-	waitLogCount(t, r.agwLog, "(capabilities ECHO,CAMERA,DASHCAM,SUMMON)", 1)
+	waitLogCount(t, r.agwLog, "(capabilities ECHO,CAMERA,DASHCAM,SUMMON,VCMD)", 1)
 	r.proxy = smStartDelayProxy(t, r.pi.PhoneAddr())
 	return r
 }

@@ -310,15 +310,15 @@ func TestGridFocusUsesTheCache(t *testing.T) {
 	f.au(9900, false, false, "P1")
 	// Into the grid: the focus gets its GOP, every other new tile its IDR at
 	// once (front, index 0 before and after, already shows its picture).
-	got := selectAndCollect(t, r, sw, `{"view":"grid","focus":"rear"}`, 6)
-	want := fmt.Sprintf("1:I9900:%d,1:P1:0,2:I9897:3,3:I9896:3,4:I9893:3,5:I9892:3", fIDR|fCatch)
+	got := selectAndCollect(t, r, sw, `{"view":"grid","focus":"rear"}`, 4)
+	want := fmt.Sprintf("1:I9900:%d,1:P1:0,2:I9897:3,3:I9896:3", fIDR|fCatch)
 	if s := fmtVF(got); s != want {
 		t.Fatalf("grid entry\n got %s\nwant %s", s, want)
 	}
-	// Focus moves to left_pillar (keyframe tile -> full): its GOP again.
-	f.au(9893, false, false, "Q1")
-	got = selectAndCollect(t, r, sw, `{"view":"grid","focus":"left_pillar"}`, 2)
-	if s := fmtVF(got); s != fmt.Sprintf("4:I9893:%d,4:Q1:0", fIDR|fCatch) {
+	// Focus moves to left_repeater (keyframe tile -> full): its GOP again.
+	f.au(9897, false, false, "Q1")
+	got = selectAndCollect(t, r, sw, `{"view":"grid","focus":"left_repeater"}`, 2)
+	if s := fmtVF(got); s != fmt.Sprintf("2:I9897:%d,2:Q1:0", fIDR|fCatch) {
 		t.Fatalf("focus change %s", s)
 	}
 }
@@ -395,10 +395,10 @@ func TestDrivingCapturesOnlyTheViewedStreams(t *testing.T) {
 	if got := portSet(startedPorts(r.helper())); got != "9900" {
 		t.Fatalf("driving, rear: %s", got)
 	}
-	// The grid while driving: its six tiles are the viewed streams.
+	// The grid while driving: its four tiles are the viewed streams (no pillars).
 	r.h.Frame(TSelect, []byte(`{"view":"grid"}`))
-	waitFor(t, "grid captures", func() bool { return len(startedPorts(r.helper())) == 6 })
-	if got := portSet(startedPorts(r.helper())); got != "9892,9893,9896,9897,9898,9900" {
+	waitFor(t, "grid captures", func() bool { return len(startedPorts(r.helper())) == 4 })
+	if got := portSet(startedPorts(r.helper())); got != "9896,9897,9898,9900" {
 		t.Fatalf("driving, grid: %s", got)
 	}
 }

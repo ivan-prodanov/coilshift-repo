@@ -309,7 +309,7 @@ func TestSummonMovesFrontTo9898AndStopsUnwatchedCaptures(t *testing.T) {
 	r.waitStatus("summon", func(s statusJSON) bool { return s.Reason == "summon" })
 	// The grid during SUMMON: its six tiles are watched, front on 9898.
 	r.h.Frame(TSelect, []byte(`{"view":"grid"}`))
-	waitFor(t, "grid tiles", func() bool { return portSet(startedPorts(f)) == "9892,9893,9896,9897,9898,9900" })
+	waitFor(t, "grid tiles", func() bool { return portSet(startedPorts(f)) == "9896,9897,9898,9900" })
 	// SUMMON closes: selectable 3 again (front back on 9895), warm set again;
 	// the hold was kept throughout.
 	host.SetSummonOpen(false)

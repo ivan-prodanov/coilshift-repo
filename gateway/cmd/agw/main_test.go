@@ -889,10 +889,10 @@ func TestSelectCaps(t *testing.T) {
 		}
 		return strings.Join(n, ",")
 	}
-	if got := names(false, false); got != "CAMERA,DASHCAM,SUMMON,REAL" {
+	if got := names(false, false); got != "CAMERA,DASHCAM,SUMMON,VCMD,REAL" {
 		t.Errorf("car build: %q (ECHO must be absent)", got)
 	}
-	if got := names(true, false); got != "ECHO,CAMERA,DASHCAM,SUMMON,REAL" {
+	if got := names(true, false); got != "ECHO,CAMERA,DASHCAM,SUMMON,VCMD,REAL" {
 		t.Errorf("bench: %q", got)
 	}
 	if got := names(true, true); got != "ECHO" {
@@ -930,7 +930,7 @@ func TestServeRegistersSummonRelay(t *testing.T) {
 
 	addr, _, errb, _ := startServe(t, "-bench", "-listen", "127.0.0.1:0", "-auth-socket", authSock,
 		"-key", ph.keyPath, "-vin-file", ph.vinPath, "-log", filepath.Join(ph.dir, "log"))
-	if logs := errb.String(); !strings.Contains(logs, "agw: listening on "+addr.String()+" (capabilities ECHO,CAMERA,DASHCAM,SUMMON)") {
+	if logs := errb.String(); !strings.Contains(logs, "agw: listening on "+addr.String()+" (capabilities ECHO,CAMERA,DASHCAM,SUMMON,VCMD)") {
 		t.Fatalf("the listen line does not name the served capabilities:\n%s", logs)
 	}
 

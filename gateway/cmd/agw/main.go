@@ -28,6 +28,7 @@ import (
 	"airgapp/gateway/capability/dashcam"
 	"airgapp/gateway/capability/echo"
 	"airgapp/gateway/capability/summonrelay"
+	"airgapp/gateway/capability/vcmd"
 	"airgapp/gateway/internal/authority"
 	"airgapp/gateway/internal/dialout"
 	"airgapp/gateway/internal/guards"
@@ -55,6 +56,8 @@ var capTable = []struct {
 	{"DASHCAM", false, dashcam.New}, // read-only TeslaCam access through the helper
 	// relays the phone's inner session to the summon helper's socket; agw never drives the car
 	{"SUMMON", false, func() capability.Capability { return newSummonRelay() }},
+	// Tesla's own signed vehicle-command messages to and from the car's command-router, through camhelper's relay
+	{"VCMD", false, vcmd.New},
 }
 
 // newSummonRelay builds SUMMON's relay (tests swap it). probeSummonUID is the uid probe-summon requires of the relay
@@ -64,7 +67,7 @@ var (
 	probeSummonUID = summonrelay.HelperUID
 )
 
-// capNames lists the capabilities' names for the listen line, e.g. "CAMERA,DASHCAM,SUMMON".
+// capNames lists the capabilities' names for the listen line, e.g. "CAMERA,DASHCAM,SUMMON,VCMD".
 func capNames(caps []capability.Capability) string {
 	if len(caps) == 0 {
 		return "none"

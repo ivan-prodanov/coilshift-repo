@@ -51,7 +51,23 @@ lease; a capability owns only its frames.
 
 ## IDs and type ranges
 
-Capability ids: SUMMON `0x01`, CAMERA `0x02`, DASHCAM `0x03`, ECHO `0x7F`.
+Capability ids: SUMMON `0x01`, CAMERA `0x02`, DASHCAM `0x03`, VCMD `0x04`, ECHO `0x7F`.
+
+- VCMD `0x04` (agw, `capability/vcmd`; direct mode Phase 2, 2026-11-27): Tesla's own signed vehicle-command
+  messages (`universalmessage.RoutableMessage`, what the phone would send over BLE) to and from the car's
+  command-router, through camhelper's relay on `/run/airgapp-camhelper/cmd.sock` (`internal/cmdrelay`).
+  `Spec{Name: "VCMD", ID: 0x04, In: {0x50: 8192}, Out: {0xD0: 8192, 0xD1: 64, 0xD2: 0}, LeaseMS: 20000}`.
+  - `0x50` MSG (phone to car): one RoutableMessage. `0xD0` MSG (car to phone): one reply. `0xD1` ERR: a reason, then 0x00
+    and the message's uuid: `refused`, `rate`, `monitor`, `busy` (not injected: safe to resend) or `unknown` (handed
+    to the router with no answer: it may have run, so wait for its reply rather than resending). `0xD2` READY: the relay's bus monitor is up (sent once).
+  - The relay injects through `com.tesla.CommandRouter.RouteFromAuthd` from a child running as the authd user (it
+    redials a dropped bus; a dead child is restarted) and reads the replies with a root D-Bus monitor on
+    `com.tesla.Auth.RouteMessageBytes`, believing only the router's current owner (`NameOwnerChanged`). Nothing reaches Tesla's
+    servers. Routing addresses are rewritten per session (a phone only ever receives replies to its own requests; at
+    most 8 per session, the oldest forgotten first);
+    only the VEHICLE_SECURITY and INFOTAINMENT domains are accepted; 20 messages/s (burst 40). The car checks every
+    message's signature and the key's role itself.
+  - Open: the relay's socket server must be uid 0. A relay that ends closes the window (`error` on the wire).
 
 - SUMMON `0x01` (agw): the Summon relay (`capability/summonrelay`),
   `Spec{Name: "SUMMON", ID: 0x01, In: {0x10: 16384}, Out: {0x90: 16384}, LeaseMS: 20000, TickHz: 0}`.
@@ -79,11 +95,13 @@ Capability ids: SUMMON `0x01`, CAMERA `0x02`, DASHCAM `0x03`, ECHO `0x7F`.
 | in | `0x10-0x1F` | SUMMON |
 | in | `0x20-0x3F` | CAMERA / TALK |
 | in | `0x40-0x4F` | DASHCAM |
+| in | `0x50-0x5F` | VCMD |
 | in | `0x7E` | ECHO |
 | out | `0x80` READY, `0x81` BYE, `0x82` TICK | core (TICK only when `Spec.TickHz > 0`: the inner SUMMON session) |
 | out | `0x90-0x9F` | SUMMON |
 | out | `0xA0-0xBF` | CAMERA / TALK |
 | out | `0xC0-0xCF` | DASHCAM |
+| out | `0xD0-0xDF` | VCMD |
 | out | `0xFE` | ECHO |
 
 ## What the core enforces

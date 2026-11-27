@@ -3,7 +3,12 @@
 > Moved here on 2026-11-26 from `tesla-dump/2026.8.6/re/bridge/camera/RUNBOOK-camera-gateway-install-2026-11-20.md`
 > (that folder is frozen and will be deleted). Its scripts are `deploy/signin_precheck.sh` and `deploy/probe_media.sh`.
 
-> **Today (2026-11-26) the car runs camera and Summon from this branch, installed with `SUMMON=1`.** An update install
+> **Since 2026-11-27 the car runs this branch in direct mode** (agw `serve -tailnet` on the car's own tailnet, no Pi in
+> the path), installed and supervised by CoilShift's Direct Link and Direct Summon packages: see
+> `tesla-dump/docs/direct-mode-no-pi-2026-11-27.md`. The steps below are the manual install over the Pi dial-out, kept
+> for the record and for a re-pin after an OTA (step 2b's pre-check works the same in direct mode).
+
+> **On 2026-11-26 the car runs camera and Summon from this branch, installed with `SUMMON=1`.** An update install
 > stages all three binaries (agw, camhelper, summonhelper) and install-car.sh, runs step 2b, then installs with
 > `SUMMON=1` as `docs/SUMMON.md`'s install section says; that section also lists the current build's hashes, and
 > `deploy/signin_precheck.sh` pins agw's and camhelper's. Steps 0 to 6 below are the camera's first install

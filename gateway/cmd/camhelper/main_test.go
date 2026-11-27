@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -173,9 +174,15 @@ func TestServeBothSockets(t *testing.T) {
 	}
 	defer os.RemoveAll(root)
 	oldEuid, oldChown, oldOracle, oldWatch, oldReady, oldRoot := geteuid, chown, newOracle, runWatch, onReady, runRoot
+	oldLookup := lookupUser
 	defer func() {
 		geteuid, chown, newOracle, runWatch, onReady, runRoot = oldEuid, oldChown, oldOracle, oldWatch, oldReady, oldRoot
+		lookupUser = oldLookup
 	}()
+	// The Direct commands relay comes up next to the other sockets when its injector user exists.
+	lookupUser = func(string) (*syscall.Credential, error) {
+		return &syscall.Credential{Uid: uint32(os.Getuid()), Gid: uint32(os.Getgid())}, nil
+	}
 	geteuid = func() int { return 0 }
 	chown = func(string, int, int) error { return nil }
 	runRoot = root
@@ -193,6 +200,7 @@ func TestServeBothSockets(t *testing.T) {
 
 	sockDir := filepath.Join(root, "airgapp-ch")
 	camSock, authSock := filepath.Join(sockDir, "c.sock"), filepath.Join(sockDir, "a.sock")
+	cmdSock := filepath.Join(sockDir, "cmd.sock")
 	pin := strings.Repeat("ab", 32)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -215,7 +223,7 @@ func TestServeBothSockets(t *testing.T) {
 		t.Fatalf("the oracle got pin %q", got)
 	}
 	<-watching
-	for _, p := range []string{camSock, authSock} {
+	for _, p := range []string{camSock, authSock, cmdSock} {
 		if st, err := os.Stat(p); err != nil || st.Mode()&os.ModeSocket == 0 || st.Mode().Perm() != 0o660 {
 			t.Fatalf("%s: %v %v", p, st, err)
 		}
@@ -244,7 +252,7 @@ func TestServeBothSockets(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("run did not return after SIGTERM")
 	}
-	for _, p := range []string{camSock, authSock} {
+	for _, p := range []string{camSock, authSock, cmdSock} {
 		if _, err := os.Lstat(p); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("%s left behind: %v", p, err)
 		}

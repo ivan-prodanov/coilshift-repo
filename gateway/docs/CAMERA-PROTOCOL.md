@@ -24,7 +24,7 @@ Views: `front`, `rear`, `left_repeater`, `right_repeater`, `left_pillar`, `right
 | rear | 9900 |
 | left_repeater / right_repeater | 9897 / 9896 |
 | left_pillar / right_pillar | 9893 / 9892 |
-| grid | phone-tiled from the six single views above (the APE's own Grid, sel 11, is the `summon` view's) |
+| grid | phone-tiled 2×2 from front, rear and the two repeaters; the pillars are single views only, never grid tiles (owner, 2026-11-27). The APE's own Grid, sel 11, is the `summon` view's |
 | interior | selectable 9895 with `GUI_selectableCameraRequest=1` (parked only) |
 | fascia | 9901, the front bumper fisheye (parked only: it needs the car's webcam session, which driving drops; off during SUMMON) |
 | summon | **the Summon strip's view: only while a SUMMON window is open.** Selectable 9895 with the car's own summon camera, which follows the gear as Tesla's summon webcam does: `GUI_selectableCameraRequest=11` (the APE's Grid) in P, N or an unknown gear, 3 (the windshield ultrawide) in D, 9 (Backup) in R. No `dewarp` (shown as the car sends it, as in Tesla's strip). Outside SUMMON it has no stream (STATUS `select_refused`) |
@@ -53,7 +53,7 @@ as the car side comes up (a stream is "ready" when its port flows, normally well
 
 | Type | Name | Max | Body |
 |---|---|---|---|
-| 0x20 | SELECT | 64 | JSON `{"view": "<view>", "focus": "<single view>"}` (`focus` only with `grid`: that tile runs full-rate; default `front`, kept across SELECTs) |
+| 0x20 | SELECT | 64 | JSON `{"view": "<view>", "focus": "<single view>"}` (`focus` only with `grid`, one of its four tiles: that tile runs full-rate; default `front`, kept across SELECTs) |
 | 0x21 | MODE | 32 | JSON `{"mode": "full"\|"keyframe"}` for the single view / grid focus |
 | 0x22 | TALK_START | 64 | JSON `{}` (or empty): a message begins (push-to-talk boost to 0 dB) |
 | 0x23 | TALK_PCM | 16384 | raw PCM, s16le, mono, 48000 Hz, even length (odd length is a protocol error) |
@@ -109,7 +109,7 @@ of up to 0.75 s. Under bulk-lane pressure the car drops access units (watermarks
 everything above 1 MiB queued; below 256 KiB each stream resumes at its next IDR); a full lane (`TrySend` false)
 drops to the next IDR too. In `keyframe` mode only IDRs are sent (about every 0.75 s). In grid the focused tile is
 full-rate, the other tiles keyframe-only. The grid stream indices are fixed: 0 front, 1 rear, 2 left_repeater,
-3 right_repeater, 4 left_pillar, 5 right_pillar. A camera that is not available has no stream (STATUS `reason` says
+3 right_repeater (no pillars). A camera that is not available has no stream (STATUS `reason` says
 why): `interior` without its selectable 1, front while parked without its selectable 3 (`"streams": []`; in the grid
 the index 0 tile is left out, e.g. while another window holds the selectable or until the first write),
 `fascia` while driving or during SUMMON, and `summon` outside SUMMON or until the summon camera is held (and 1 s

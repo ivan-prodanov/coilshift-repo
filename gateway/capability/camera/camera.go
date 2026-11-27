@@ -57,14 +57,25 @@ const (
 
 // Views.
 var (
-	gridViews = []string{"front", "rear", "left_repeater", "right_repeater", "left_pillar", "right_pillar"}
+	// The grid's four tiles, in stream-index order; the pillars are single views only (owner, 2026-11-27).
+	gridViews = []string{"front", "rear", "left_repeater", "right_repeater"}
 	// summon: the car's own Summon camera (Tesla's summon webcam) on 9895, only
 	// while a SUMMON window is open (design §6.5).
-	validViews = map[string]bool{"grid": true, "interior": true, "fascia": true, "summon": true}
+	validViews = map[string]bool{"grid": true, "interior": true, "fascia": true, "summon": true, "left_pillar": true, "right_pillar": true}
 	directPort = map[string]int{
 		"rear": 9900, "left_repeater": 9897, "right_repeater": 9896, "left_pillar": 9893, "right_pillar": 9892,
 	}
 )
+
+// isGridView reports whether v is one of the grid's tiles (a valid grid focus).
+func isGridView(v string) bool {
+	for _, g := range gridViews {
+		if g == v {
+			return true
+		}
+	}
+	return false
+}
 
 func init() {
 	for _, v := range gridViews {
@@ -382,7 +393,7 @@ func (h *handler) Frame(t byte, body []byte) error {
 		if !validViews[s.View] {
 			return fmt.Errorf("camera: SELECT unknown view %q", s.View)
 		}
-		if s.Focus != "" && (s.View != "grid" || directPort[s.Focus] == 0 && s.Focus != "front") {
+		if s.Focus != "" && (s.View != "grid" || !isGridView(s.Focus)) {
 			return fmt.Errorf("camera: SELECT bad focus %q", s.Focus)
 		}
 		return h.send(cmd{kind: cmdSelect, view: s.View, focus: s.Focus})
