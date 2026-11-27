@@ -1308,3 +1308,22 @@ func TestWatchTailnetAddr(t *testing.T) {
 		t.Fatal("no move reported")
 	}
 }
+
+// Every capability agw serves must be one a hello can name: ParseHello keeps its own list of ids, and a capability
+// missing from it is refused before sign-in ("preauth: bad hello") however well it works on its own (VCMD, 2026-11-27).
+func TestEveryServedCapabilityPassesTheHello(t *testing.T) {
+	pk, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range selectCaps(true, false) {
+		id := c.Spec().ID
+		for _, v := range []byte{proto.HelloV1, proto.HelloV2} {
+			h := proto.Hello{Version: v, Cap: id}
+			copy(h.PkS[:], pk.PublicKey().Bytes())
+			if _, err := proto.ParseHello(h.Bytes()); err != nil {
+				t.Errorf("%s (0x%02x), hello v%d: %v", c.Spec().Name, id, v, err)
+			}
+		}
+	}
+}

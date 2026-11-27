@@ -13,6 +13,7 @@ const (
 	CapSummon  byte = 0x01
 	CapCamera  byte = 0x02
 	CapDashcam byte = 0x03
+	CapVcmd    byte = 0x04 // Direct commands (capability/vcmd)
 	CapEcho    byte = 0x7F // test only
 )
 
@@ -60,7 +61,7 @@ func ParseHello(b []byte) (Hello, error) {
 		return h, errors.New("proto: bad hello version")
 	}
 	switch b[5] {
-	case CapSummon, CapCamera, CapDashcam, CapEcho:
+	case CapSummon, CapCamera, CapDashcam, CapVcmd, CapEcho:
 	default:
 		return h, errors.New("proto: unknown capability")
 	}
