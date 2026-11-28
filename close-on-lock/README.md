@@ -13,6 +13,12 @@ then, so nothing is touched.
 **Status:** 🧪 built and tested off the car 2026-11-28 (lint, `csdk test`, `test/run.sh`); not yet
 tried on the car. Read from the 2026.38.6 dump (Model 3/Y build). S/X are assumed to work the same.
 
+**1.0.1:** adds an apply hook that only records the version. The car's CoilShift refused 1.0.0:
+"does not expand: package … has no apply hook and no byte rules, the only things SDK 1.0 runs".
+SDK 1.0 on the car only expands a package that has an apply hook or byte rules, even when it
+also has a service. `csdk lint --strict` and `csdk test` both passed 1.0.0, so `tools/build.sh`
+now fails any package that has neither.
+
 ## Install
 
 Install **Close frunk & trunk on lock** in CoilShift. There are no settings. The status line under

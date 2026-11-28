@@ -72,6 +72,7 @@ done
 recorded() { awk -F'\t' -v r="$1" -v b="$2" -v s="$3" '$1==b && $2==s && $3==r {print $4}' "$digests" 2>/dev/null; }
 
 # manifest FILE FIELD: id | version | rules (one per line) | payloads (one path per line)
+#   | expands ("yes" when the package has an apply hook or byte rules)
 manifest() {
     python3 -I - "$1" "$2" <<'PY'
 import json, sys
@@ -79,6 +80,8 @@ m = json.load(open(sys.argv[1]))
 f = sys.argv[2]
 if f in ("id", "version"):
     print(m[f])
+elif f == "expands":
+    print("yes" if m.get("hooks", {}).get("apply") or m.get("byte_rules") else "no")
 elif f == "rules":
     print("\n".join(m.get("byte_rules", [])))
 elif f == "payloads":
@@ -109,6 +112,11 @@ for m in "$root"/*/coilshift/*/coilshift.json; do
     else
         "$csdk" lint --strict "$tree" || fail "$id: lint --strict"
     fi
+
+    # The car's CoilShift refuses a package with neither an apply hook nor byte rules ("does not
+    # expand: ... the only things SDK 1.0 runs"), and csdk lint and csdk test both let it pass.
+    # close-on-lock 1.0.0 (a service only) was refused on the car this way.
+    [ "$(manifest "$m" expands)" = yes ] || fail "$id: no apply hook and no byte rules; the car's CoilShift will not expand it (add a hooks.apply)"
 
     # harness: apply,apply and apply,remove
     payload_args=()
