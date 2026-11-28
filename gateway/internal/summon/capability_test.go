@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,8 +72,7 @@ func (c *capCar) setConnectErr(err error) {
 	c.fakeCar.mu.Unlock()
 }
 
-// capRig is a Capability on recording fakes, a BOOTTIME clock (a Fake unless the test needs real time) and the fixed
-// wall clock wallMS.
+// capRig is a Capability on recording fakes and a BOOTTIME clock (a Fake unless the test needs real time).
 type capRig struct {
 	c       *Capability
 	fake    *clock.Fake // the clock, when it is a Fake
@@ -98,7 +98,6 @@ func newCapRig(t *testing.T, clk clock.Clock) *capRig {
 		Car:    r.car,
 		Marker: r.marker,
 		Clock:  clk,
-		Now:    func() time.Time { return time.UnixMilli(wallMS) },
 		Logf: func(format string, args ...any) {
 			r.mu.Lock()
 			r.logs = append(r.logs, fmt.Sprintf(format, args...))
@@ -829,26 +828,30 @@ func testTickAgePassedThrough(t *testing.T, params json.RawMessage) {
 		w := testkit.NewFakeWindow()
 		s := r.openSeededWith(t, w, params)
 		m := fwd(t)
-		// Each case ends with the phone's abort, so a refusal is for staleness, never for an active verb (R12).
-		s.verb(t, m, 0, false) // unknown tick
+		// The tick age reaches the engine: a stale verb that would start a hold with no liveness instant before it is
+		// refused; a fresh one goes, and is the liveness instant that lets the stale one after it start a hold too.
+		s.verb(t, m, 0, false) // unknown tick, no liveness yet: refused
 		s.msg(t, abortMsg(t))
 		s.verb(t, m, Fresh, true) // exactly Fresh
 		s.msg(t, abortMsg(t))
-		s.verb(t, m, staleAge, true) // just over Fresh
+		s.verb(t, m, staleAge, true) // just over Fresh, 0 ms after the fresh verb
 		s.msg(t, abortMsg(t))
-		want := []string{AbortJSON, string(m.Canonical), AbortJSON, AbortJSON}
+		c := string(m.Canonical)
+		want := []string{AbortJSON, c, AbortJSON, c, AbortJSON}
 		if got := r.car.sends(); !slices.Equal(got, want) {
-			t.Fatalf("the car got %q, want %q: only the verb at exactly Fresh goes through", got, want)
+			t.Fatalf("the car got %q, want %q", got, want)
 		}
 		cars := w.Sent(TypeCar)
-		if len(cars) != 3 {
-			t.Fatalf("the window has %d CAR frames, want the location and two refusals", len(cars))
+		if len(cars) != 2 {
+			t.Fatalf("the window has %d CAR frames, want the location and one refusal", len(cars))
 		}
 		refusalAt(t, cars[1], forwardType, "action_invalid")
-		refusalAt(t, cars[2], forwardType, "action_invalid")
-		// The press id reaches the engine, which logs it for the forwarded verb and both refusals.
+		// The press id reaches the engine, which logs it for each verb.
 		if got := r.linesWith("(press 7"); len(got) != 3 {
 			t.Fatalf("log lines %q: want the press id 7 for each of the three verbs", got)
+		}
+		if got := r.linesWith("stale tick: not a liveness instant"); len(got) != 1 {
+			t.Fatalf("log lines %q: want the late tick's verb logged as no liveness instant", got)
 		}
 	})
 	t.Run("stale LIVE and HB stamp no liveness", func(t *testing.T) {
@@ -1461,9 +1464,9 @@ func TestFramesBetweenSessionsDropped(t *testing.T) {
 	r := newCapRig(t, clock.NewFake())
 	w1 := testkit.NewFakeWindow()
 	s1 := r.openSeeded(t, w1)
-	const high = wallMS + 1_000_000
+	high := time.Now().UnixMilli() + 1_000_000_000 // above any Now in this test
 	r.c.CarFrame(carFrame(carlink.ChannelTCP, resultJSON(forwardType, true, "", high)))
-	waitCar(t, w1, 2) // session 1's engine saw the high timestamp
+	waitCar(t, w1, 2) // session 1 relayed the cmd_result
 	s1.end(t)
 
 	// A late cmd_result between the sessions, then the next session at once.
@@ -1480,21 +1483,19 @@ func TestFramesBetweenSessionsDropped(t *testing.T) {
 	if got := w2.Sent(TypeCar); !reflect.DeepEqual(got, [][]byte{carBody(0, style)}) {
 		t.Fatalf("the second window got %q, want only its own H1 push", got)
 	}
-	// The second session starts clean: a stale verb's refusal is stamped with Now, not an old highest timestamp, and
-	// it has no car position from the first session.
-	m := verb10m(t, forwardType)
-	s2.verb(t, m, 0, false)
-	s2.msg(t, abortMsg(t))
-	s2.verb(t, m, 0, true)
-	s2.msg(t, abortMsg(t))
+	// The second session starts clean: a stale verb finds no liveness instant from the first session, and its
+	// refusal is stamped with the wall clock, not the first session's highest cmd_result timestamp.
+	before := time.Now().UnixMilli()
+	s2.verb(t, verb10m(t, forwardType), 0, false)
+	after := time.Now().UnixMilli()
 	cars := w2.Sent(TypeCar)
-	if len(cars) != 3 {
-		t.Fatalf("the second window has %d CAR frames, want its push and two refusals", len(cars))
+	if len(cars) != 2 {
+		t.Fatalf("the second window has %d CAR frames, want its push and a refusal", len(cars))
 	}
-	if ts := refusalAt(t, cars[1], forwardType, "action_invalid"); ts != fmt.Sprint(wallMS) {
-		t.Fatalf("the stale verb's refusal has timestamp %s, want Now (%d)", ts, wallMS)
+	ts, err := strconv.ParseInt(refusalAt(t, cars[1], forwardType, "action_invalid"), 10, 64)
+	if err != nil || ts < before || ts > after {
+		t.Fatalf("the refusal's timestamp %d (%v), want the wall clock in [%d, %d]", ts, err, before, after)
 	}
-	refusalAt(t, cars[2], forwardType, "invalid_vehicle_location")
 }
 
 // gatedWindow is a FakeWindow whose TrySend waits until gate is closed: a phone link that stops taking frames.

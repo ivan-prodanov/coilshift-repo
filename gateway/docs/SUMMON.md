@@ -30,7 +30,7 @@ from and how the installer keeps it.
 |---|---|---|---|
 | `agw serve` | 4950 | Faces the network (it dials the Pi). Its SUMMON capability (0x01) relays the phone's inner session to the helper's socket as opaque bytes. It has no bus access and no helper key, so it cannot drive | `capability/summonrelay` |
 | `summonhelper run` | 1337 (`webrtc`) | The supervisor. It runs `serve` as its child and queues for `com.tesla.Webrtc` behind it. When the child is gone, it takes the name and, while the session marker exists, sends `cmd_abort` and the disconnect. Then, on every branch, it removes the live file the child left, before it releases the name | `internal/summon/helper/takeover.go`, `internal/supervise` |
-| `summonhelper serve` | 1337 | The helper. It owns `com.tesla.Webrtc` (DO_NOT_QUEUE) and serves the inner session with the gateway server core on the relay socket. It runs H1-H4, D2, D3 and the presence lease, and holds the live file, locked, while the engine of a session that opted into the presence lease is up. It is the only process the network can reach that can issue a motion command | `internal/summon/helper/helper.go`, `internal/summon/helper/live.go`, `internal/summon` |
+| `summonhelper serve` | 1337 | The helper. It owns `com.tesla.Webrtc` (DO_NOT_QUEUE) and serves the inner session with the gateway server core on the relay socket. It runs H1-H4, D2 and the presence lease, and holds the live file, locked, while the engine of a session that opted into the presence lease is up. It is the only process the network can reach that can issue a motion command | `internal/summon/helper/helper.go`, `internal/summon/helper/live.go`, `internal/summon` |
 | `summonhelper finish` | 1337 | runit's finish hook, after every exit of `run`. It first removes a live file left behind, whatever the marker says. If a session marker is left (a killed supervisor), it then sends `cmd_abort` and the confirmed disconnect; otherwise nothing more | `cmd/summonhelper/main.go` (`cmdFinish`), `helper.Finish` |
 
 Around them:
@@ -155,11 +155,14 @@ Only:
 - `{"data_channels_ready": true}` (H1), at session start;
 - `{"msg_type":"autopark:cmd_abort"}`, from D2's trip, H4, the supervisor's takeover and the finish hook;
 - the disconnect map `{"ice_state_change": true, "msg_type": "autopark:set_webrtc", "set_webrtc_value": false}`;
-- refusal `cmd_result`s, to the phone on `dcTcp`:
-  `{"cmd_type":<the request's msg_type>,"msg_type":"autopark:cmd_result","reason":<reason>,"result":false,"timestamp":<ms>}`.
-  The timestamp is max(the wall clock in Unix ms, the highest `cmd_result` timestamp seen in the session). The
-  reasons are `action_invalid` (a stale verb, or a verb while one is active), `location_params_invalid` (D3: too
-  close, or out of range) and `invalid_vehicle_location` (D3: no car position, or a stale one).
+- one refusal `cmd_result`, to the phone on `dcTcp`, for a stale verb that would start a hold with no fresh liveness
+  instant in the last 800 ms (D2 below):
+  `{"cmd_type":<the verb's msg_type>,"msg_type":"autopark:cmd_result","reason":"action_invalid","result":false,"timestamp":<ms>}`.
+  The timestamp is max(the wall clock in Unix ms, the highest `cmd_result` timestamp seen in the session).
+
+Owner ruling 2026-11-28 dropped every other refusal (`action_invalid` for a verb while one was active or for a stale
+tick alone, `location_params_invalid` and `invalid_vehicle_location` from D3) with gates 6-9 ("Gates dropped on
+2026-11-28" below). Every other verb goes to the car, and the car's own `cmd_result` answers it.
 
 It never sends a heartbeat, a motion verb or a `device_location` of its own. It does not forward the `cmd_result` of
 an abort it originated: it swallows one per injected abort. Everything else it sends the car is the phone's own
@@ -171,15 +174,46 @@ abort or a `device_location`.
 
 - **Freshness.** LIVE, VERB and HB carry the newest tick id the phone has. A frame is fresh when its tick was issued
   in this session at most F = 500 ms (`summon.Fresh`; was 150 ms) before it arrived (`Window.TickAge`, on the helper's BOOTTIME clock).
-- **Liveness instants** are fresh LIVE and HB frames and forwarded verbs. **The trip:** while a verb is active and
-  more than 800 ms (`summon.TripAfter`; was 300 ms) have passed since the latest one, the helper injects `cmd_abort`. It swallows that abort's
+- **Liveness instants** are fresh LIVE and HB frames and fresh forwarded verbs. A stale verb is forwarded (owner
+  ruling 2026-11-28) but is never a liveness instant. **The trip:** while a verb is active and more than 800 ms
+  (`summon.TripAfter`; was 300 ms) have passed since the later of the latest liveness instant and the start of the
+  hold (the forwarding of the fresh verb that set it active; for a stale verb, which may start a hold only within
+  800 ms of a fresh liveness instant, that instant), the helper injects `cmd_abort`. So a stale verb that starts a
+  hold, with no fresh LIVE or HB after it, trips 800 ms after the last fresh liveness instant, never later: at most
+  800 ms of motion without one. A verb that replaces an active one never moves the hold's start: stale re-sends while
+  held keep nothing alive. It swallows that abort's
   `cmd_result`, keeps the session, and forwards no HB until the next forwarded verb. The D2 loop runs every 10 ms.
   So on a lost or stalled link the abort goes out about 800 ms after the last fresh frame arrived: at most
   F + 800 ms plus one 10 ms loop period (about 1310 ms) after that frame's tick was issued. Design §5.2 rounds this to
   450 ms at the old 150/300 ms values; the bench measured trips 301-310 ms after the last liveness instant at those
   values.
-- **Refusals:** a stale verb, or a verb while one is active, gets `action_invalid`.
-- **The link flag:** 3 LIVE tick ages in a row over 100 ms set it; the end of a hold, or 2 s of ages at or under
+- **Verbs** (owner ruling 2026-11-28, dropping gates 6 and 7): a verb while one is active is forwarded and replaces
+  it (the phone re-sends `cmd_forward`/`cmd_reverse` about every 250 ms while held, and switches between them
+  quickly), and a stale verb is forwarded, with one exception. **The stale start:** a stale verb that would start a
+  hold (no verb active, after a trip too) needs a liveness instant at most 800 ms (TripAfter) before it; without one
+  it is refused with `action_invalid` and the log line `summon: <type> (press <n>) refused: no fresh liveness in
+  800 ms`. Without that rule an all-stale link, re-sending every 250 ms, would restart the car after each trip and
+  move it in 800 ms pulses with no liveness at all. A stale verb that replaces an active hold is always forwarded, and
+  a fresh verb always starts or replaces one. Each forwarded verb clears the trip's HB block.
+- **Verb logs:** a verb that starts a hold logs `summon: <type> (press <n>, <size> bytes) forwarded` (with `, stale
+  tick: not a liveness instant` for a stale one); one that replaces a verb of another type logs the same, then
+  `, replacing the active <type> (forwarded <ms> ms before)`. A re-send of the active type logs nothing; the hold's
+  re-sends are counted and logged once at its end (the phone's release, D2's trip or H4), with the hold's HB and LIVE
+  arrivals: `summon: hold ended: <n> re-sends (<m> stale); HB <a> arrived, <f> forwarded, <d> dropped (<s> stale,
+  <t> after a trip), longest gap between forwarded <g> ms; LIVE <a> arrived, <f> fresh, longest gap between fresh
+  <g> ms` (a gap is `none` with fewer than two).
+- **The trip's reason:** D2's trip line ends with why no liveness instant came, to tell "the phone's frames stopped
+  arriving" from "they arrived, stale": `summon: D2 trip: no liveness instant for <ms> ms, cmd_abort injected; last
+  LIVE arrived <ms> ms ago (tick age <ms> ms | unknown tick) | no LIVE in the session; in the last 800 ms <n> LIVE
+  (<s> stale) and <n> HB (<s> stale)` (`at least` before the counts when the 128-entry ring is full). The time since
+  the core's latest TICK is not logged: the capability's window exposes only `TickAge` of an echoed id, which the
+  LIVE's tick age already gives.
+- **The car's Summon status:** the helper logs the car's `autopark:status` frame (relayed as before) when any of
+  `autopark_state`, `autopark_state_reason`, `smart_summon_state`, `smart_summon_last_wait_reason`,
+  `smart_summon_last_abort_reason` or `smart_summon_last_unavailable_reason` differs from the session's previous one,
+  and the first one of each session: `summon: car status autopark="…" reason="…" smart="…" wait="…" abort="…"
+  unavailable="…"` (each value quoted, cut at 48 bytes; a missing field is `""`). Repeats log nothing. No coordinate,
+  VIN or key is ever logged.- **The link flag:** 3 LIVE tick ages in a row over 100 ms set it; the end of a hold, or 2 s of ages at or under
   75 ms, clear it. agw passes it to `Host().SetSummonLinkDegraded`, and CAMERA then sends keyframes only.
 - **Health:** the helper is unhealthy when the D2 loop has not stamped for over 250 ms, when the name is lost, or
   when an emit failed. An emit that overruns 100 ms latches the bus dead and exits with code 3 (plan call 3). A Fatal
@@ -223,12 +257,13 @@ abort or a `device_location`.
     10 s from the issue time of the newest tick stamped: an echo agw held more than 3 s stamps nothing, and one it
     released sooner stamps its tick's issue time, not its arrival, so holding frames back gains agw nothing more. A
     phone that has not opted in can still be kept up about 20 s per held frame, but its session has no live file, so
-    that stretch never reaches SUMMON mode. Neither moves the car: every verb still needs a tick echo at most F = 500 ms
-    old.
+    that stretch never reaches SUMMON mode. Neither keeps the car moving: since owner ruling 2026-11-28 a stale verb
+    starts a hold only within 800 ms of a fresh liveness instant, it is no liveness instant itself, and D2 trips its
+    hold 800 ms after that instant unless a tick echo at most F = 500 ms old arrives.
   - **An idle phone stays up:** the phone sends PRESENCE about once a second whether or not a control is held, so it
     is dropped only once more than 10 s have passed since the issue of the newest tick it echoed at most 3 s old.
     After its last such echo, that is 7 to 10 s (10 s less that echo's age) in which every echo arrived more than
-    3 s late. PRESENCE makes no engine call and touches neither D2, D3, the link flag nor the car.
+    3 s late. PRESENCE makes no engine call and touches neither D2, the link flag nor the car.
   - **Rollout:** the helper must be on the car before any phone build sends 0x18. An older helper's Spec has no 0x18,
     so it answers PRESENCE with BYE `grammar`. The phone's half (mobile `feat/summon-presence`, 0df9858) is held back
     until then. This helper accepts PRESENCE from a phone that has not opted in: it stamps it and enforces nothing.
@@ -240,41 +275,28 @@ abort or a `device_location`.
     `TestHeldBackFramesCannotStretchSession`, its opted-out control `TestHeldBackFramesStretchAnOptedOutSession` (no
     live file throughout), and `TestSilentAgwEndsSessionAtLease`.
 
-### D3, the 3 m floor
+### Gates dropped on 2026-11-28
 
-At each verb (`cmd_find_me`, `cmd_forward`, `cmd_reverse`), in this order (`internal/summon/engine.go`,
-`floorLocked`):
-- no car position, or a stale one: `invalid_vehicle_location`;
-- the phone position or the goal outside −90 ≤ lat ≤ 90 and −180 ≤ lon ≤ 180, a NaN included:
-  `location_params_invalid` (R28);
-- the phone position or the goal closer than 3.0 m to the car: `location_params_invalid`. The goal is
-  `goal_latitude`/`goal_longitude` when both are present, else the phone position, as the car derives it. The arrows
-  carry no goal, so their goal is the phone.
+The owner ruled (2026-11-28) that four of the helper's gates go: the car's APE already handles obstacles and the goal,
+and on the LTE link the gates misfired. They were:
+- **Gate 6, one verb at a time:** a verb while one was active was refused with `action_invalid`. Now it is forwarded
+  and replaces the active one.
+- **Gate 7, the fresh press:** a verb whose tick was not fresh was refused with `action_invalid`. Now it is forwarded,
+  but it is never a liveness instant, and it may start a hold only within 800 ms of a fresh liveness instant, so D2
+  stays sound ("The stale start", D2 above).
+- **Gate 8, D3's stale car position:** a verb was refused with `invalid_vehicle_location` with no car position, or
+  after more than 1 s of hold time with no car frame (or no location while moving). Gone, with its staleness state.
+- **Gate 9, D3's 3 m floor:** a verb whose phone position or goal was under 3.0 m from the car (haversine), or out of
+  WGS84's ranges, was refused with `location_params_invalid`. Gone: the engine no longer reads the car's
+  `vehicle_data:location` at all (it still relays it to the phone).
 
-The car position is the latest `vehicle_data:location` relayed in the session. `device_location` is never checked: it
-goes to the car as in Tesla's app (owner, 2026-11-21).
-
-**Staleness** (plan call 2, as amended; `staleLocked`'s doc in `internal/summon/engine.go`). It runs only while a verb
-is active, and quiet hold time is summed across holds (the carry rule). Any car frame resets the no-frame window's
-sum; only a location frame resets the motion window's.
-- A position goes stale after more than 1 s with no car frame of any kind.
-- It also goes stale after more than 1 s with no location frame:
-  - while the last location showed a speed other than 0, summed over holds; or
-  - while it showed gear D or R at speed 0, within one hold.
-- Unknown gears (Invalid, SNA) do not count as motion.
-- Each window counts from the later of its last frame and the verb's forwarding, so silence before a press never
-  counts. The rules are checked at every 10 ms tick of the D2 loop and at the phone's release.
-
-Once stale, the position stays stale until a newer location frame arrives. A stationary car sends location only
-when it changes, so in practice every later press in that session is refused with `invalid_vehicle_location` until
-the session restarts (H1 makes the car push a location). Tesla's app would resume there: this is the owner's 3 m
-floor rule bending Tesla's behaviour.
-
-**The 3 m boundary, for the phone plan.** The helper uses haversine with R = 6371 km (`guards.DistanceM`) on the
-coordinates as received, and refuses when d < 3.0 m. A phone that pushes a Go to Target point out to exactly 3 m
-(MapKit's geodesic is ellipsoidal) sits on that boundary, so the phone plan must choose a margin. Task 7's review
-suggested pushing targets to at least 3.05 m and enabling the controls only from 3.05 m, measured with the same
-haversine.
+D2 (the deadman, its trip and its HB rules), the message whitelist, H4, the presence lease, the link flag and the
+watchdogs are unchanged. The tests are `TestStaleVerbForwarded`, `TestStaleVerbStartingAHoldNeedsLiveness`,
+`TestAllStaleLinkStopsAfterTheFirstTrip`, `TestHealthyLinkOccasionalStaleVerbForwarded`, `TestStaleVerbIsNotLiveness`,
+`TestVerbWhileActiveForwarded`, `TestVerbLogs`, `TestQuickForwardReverseSwitch` (`internal/summon/engine_test.go`),
+`TestNoD3Refusals` and `TestCarStatusLogged` (`internal/summon/ruling_test.go`), and on the bench
+`TestSummonVerbWhileActiveReplaces`, `TestSummonNoFloor`, `TestSummonFrozenCarNoRefusal` and the late, delayed and
+stalled links' refused stale re-presses.
 
 ### Callers, revocation and keys
 
@@ -395,8 +417,10 @@ exit-node users can reach 192.168.90.0/24: prove it from the car's state and the
   | MSG | a `device_location`, `info` or keepalive that does not match | Drop |
 
   So a `cmd_abort` in a MSG frame is always accepted; in a VERB or HB frame, or with `_request`, it ends the session.
-- **Results.** Every verb gets a `cmd_result`: the car's, forwarded, or the helper's refusal, whose timestamp never
-  goes below one already seen.
+- **Results.** Every verb gets a `cmd_result`: the car's, forwarded, or, for a stale verb that would start a hold with
+  no fresh liveness instant in the last 800 ms, the helper's `action_invalid` refusal, whose timestamp never goes below
+  one already seen. Since owner ruling 2026-11-28 the helper refuses nothing else (no `location_params_invalid` or
+  `invalid_vehicle_location`, no `action_invalid` for a verb while one is active).
 - **Presence** ("The presence lease" above; review F5r).
   - On every 20th tick of an up connection, about once a second, held or not, send PRESENCE (0x18) with the newest
     tick id. Its body is exactly the 8-byte id, as in LIVE; any other length ends the session.
@@ -424,9 +448,10 @@ go test -race -count=3 ./cmd/agw/ -run TestSummon    # what each task ran
 ```
 
 It covers the happy path (on the in-memory bus, and on a private dbus-daemon in `TestSummonRealBus`), D2 (lost
-frames, a stalled link, links late by 2 s and by 220 ms, a delayed verb, a stall then a flush, a verb while one is
-active), D3 (the floor for each verb and for Go to Target's phone and goal apart, a stale position,
-`device_location` passing through), the schema, and revocation (the car removes the key: both authority re-checks
+frames, a stalled link, links late by 2 s and by 570 ms, a delayed verb, a stall then a flush, each with its stale
+re-press refused for want of a fresh liveness instant; a verb while one is active replacing it), the dropped gates (no floor for
+any verb or for Go to Target's phone or goal, no refusal on a frozen car, `device_location` passing through), the
+schema, and revocation (the car removes the key: both authority re-checks
 fail; then each side's re-check alone, which forces the helper-first and the agw-first order).
 
 The packages that start a private dbus-daemon (`internal/carlink/bustest`) are the bench's `TestSummonRealBus`,
@@ -1111,10 +1136,17 @@ and `--after-boot` stops it again. Once the reports are read and noted, remove t
 
 Each line is a ruling that changed the approved design's or the plan's text, with its reason.
 
+- **Gates 6-9 dropped** (owner, 2026-11-28). One verb at a time, the fresh press, D3's stale car position and D3's
+  3 m floor are gone; a stale verb is forwarded but is never a liveness instant, and starts a hold only within 800 ms
+  of a fresh liveness instant (else `action_invalid`, so an all-stale link cannot pulse the car). Why: the car's APE
+  handles obstacles and the goal itself, the gates misfired on the LTE link, and the phone now re-sends the held arrow about
+  every 250 ms and switches Forward and Reverse quickly ("Gates dropped on 2026-11-28").
+
 - **D3's carry rule** (plan call 2; Task 7). Call 2's per-hold windows became the carry rule. Quiet hold time sums
   across holds until a car frame resets it (for the motion rule, a location frame). Gear D or R at speed 0 keeps the
   per-hold window, "speed above 0" reads as any speed other than 0, and staleness is checked at the phone's release
-  too. Why: per-hold windows let short holds hide a frozen car stream forever (fail-open).
+  too. Why: per-hold windows let short holds hide a frozen car stream forever (fail-open). Dropped with all of D3 by
+  owner ruling 2026-11-28 ("Gates dropped on 2026-11-28").
 - **R1's strict reading** (design §6.2; Task 12). The design says Tailscale must not advertise 192.168.90.0/24.
   `guards.RouteOff` refuses any advertised route except the exit-node pair. Why: it was built so before this plan,
   it fails closed, and design §6.2's intent is that agw never fronts the vehicle LAN. Narrowing it to the vehicle
@@ -1193,7 +1225,8 @@ Each line is a ruling that changed the approved design's or the plan's text, wit
   at about 14 Hz floods the log.
 - **The range floor** (D3; R28, Task 7). D3 also refuses with `location_params_invalid` unless −90 ≤ lat ≤ 90 and
   −180 ≤ lon ≤ 180 (a NaN is refused too), for the phone position and every verb's goal. Why: such values could wrap
-  onto the car's own position in the car's encoding, and Tesla's app never presses without a fix.
+  onto the car's own position in the car's encoding, and Tesla's app never presses without a fix. Dropped with all of
+  D3 by owner ruling 2026-11-28.
 - **The supervisor's at-once name** (plan Task 11; its review). When the queue request gets `com.tesla.Webrtc` at
   once, the child had the name and lost it. The parent keeps the name, SIGKILLs the child, runs the normal takeover
   (if the marker is there: the abort and the confirmed disconnect, then the clear; then the release), and exits

@@ -15,8 +15,9 @@ import (
 	"airgapp/gateway/internal/clock"
 )
 
-// The engine tests' car and phone. Every test seeds the car at (carLat, carLon), in P at speed 0, and presses from
-// 10 m, so the tests stay valid under the 3 m floor (Task 7). Tasks 7 and 8 reuse these fakes and helpers.
+// The engine tests' car and phone. Every test seeds the car's first location, (carLat, carLon) in P at speed 0, as
+// the car pushes it after H1, and presses from 10 m. The engine reads neither (D3 was dropped by owner ruling
+// 2026-11-28); the logs tests check that no position leaks into a log line.
 const (
 	carLat = 52.52
 	carLon = 13.405
@@ -405,26 +406,6 @@ func locationJSON(lat, lon float64, shift string, speed float64) []byte {
 // carEcho is the car's heartbeat echo, which goes on dcUdp.
 var carEcho = []byte(`{"car_timestamp":1700000000250,"msg_type":"autopark:heartbeat_car_webrtc","timestamp":1700000000200}`)
 
-// assertRefusal checks that f is the helper's refusal of cmdType with reason, on dcTcp.
-func assertRefusal(t *testing.T, f phoneFrame, cmdType, reason string) {
-	t.Helper()
-	m := decode(t, []byte(f.data))
-	if f.ch != 0 || m["msg_type"] != "autopark:cmd_result" || m["cmd_type"] != cmdType || m["reason"] != reason ||
-		m["result"] != false {
-		t.Fatalf("got channel %d %s, want a dcTcp refusal of %s with reason %s", f.ch, f.data, cmdType, reason)
-	}
-}
-
-// refusalTS is the timestamp of the refusal in f.
-func refusalTS(t *testing.T, f phoneFrame) string {
-	t.Helper()
-	ts, ok := decode(t, []byte(f.data))["timestamp"]
-	if !ok {
-		t.Fatalf("no timestamp in %s", f.data)
-	}
-	return fmt.Sprint(ts)
-}
-
 // within runs f and fails the test if it has not returned within d (a deadlock).
 func within(t *testing.T, d time.Duration, what string, f func()) {
 	t.Helper()
@@ -538,7 +519,40 @@ func TestVerbSendFailureKeepsVerbActive(t *testing.T) {
 	}
 }
 
-func TestStaleVerbRefused(t *testing.T) {
+// bootClock is a Clock that stays at its BOOTTIME ms.
+type bootClock uint64
+
+func (c bootClock) BootMS() uint64 { return uint64(c) }
+
+// liveAgo feeds a fresh LIVE, then advances the clock by ms: the latest liveness instant is ms old.
+func (r *rig) liveAgo(ms uint64) {
+	r.e.Live(0, true)
+	r.clk.Advance(ms)
+}
+
+// assertRefusal checks that f is the helper's refusal of cmdType with reason, on dcTcp.
+func assertRefusal(t *testing.T, f phoneFrame, cmdType, reason string) {
+	t.Helper()
+	m := decode(t, []byte(f.data))
+	if f.ch != 0 || m["msg_type"] != "autopark:cmd_result" || m["cmd_type"] != cmdType || m["reason"] != reason ||
+		m["result"] != false {
+		t.Fatalf("got channel %d %s, want a dcTcp refusal of %s with reason %s", f.ch, f.data, cmdType, reason)
+	}
+}
+
+// refusalTS is the timestamp of the refusal in f.
+func refusalTS(t *testing.T, f phoneFrame) string {
+	t.Helper()
+	ts, ok := decode(t, []byte(f.data))["timestamp"]
+	if !ok {
+		t.Fatalf("no timestamp in %s", f.data)
+	}
+	return fmt.Sprint(ts)
+}
+
+func TestStaleVerbForwarded(t *testing.T) {
+	// Gate 7 ("fresh press") was dropped by owner ruling 2026-11-28: a stale verb goes to the car, given a liveness
+	// instant at most TripAfter before it when it starts a hold.
 	stale := []struct {
 		name string
 		age  time.Duration
@@ -551,60 +565,452 @@ func TestStaleVerbRefused(t *testing.T) {
 		for _, c := range stale {
 			t.Run(typ+"/"+c.name, func(t *testing.T) {
 				r := startRig(t)
-				r.e.Verb(verb10m(t, typ), c.age, c.ok, 1)
-				if got := r.car.sends(); len(got) != 0 {
-					t.Fatalf("car got %q for a stale verb", got)
+				r.liveAgo(tripMS) // exactly TripAfter ago still counts
+				m := verb10m(t, typ)
+				r.e.Verb(m, c.age, c.ok, 1)
+				if got := r.car.sends(); !slices.Equal(got, []string{string(m.Canonical)}) {
+					t.Fatalf("car got %q, want the verb", got)
 				}
-				if r.e.VerbActive() {
-					t.Fatal("a refused verb set verbActive")
+				if !r.e.VerbActive() {
+					t.Fatal("a forwarded verb left verbActive false")
 				}
-				got := r.phone.got()
-				if len(got) != 1 {
-					t.Fatalf("phone got %v, want one refusal", got)
+				if got := r.phone.got(); len(got) != 0 {
+					t.Fatalf("phone got %v: the helper answers no forwarded verb", got)
 				}
-				assertRefusal(t, got[0], typ, "action_invalid")
 			})
 		}
 	}
-	t.Run("exactly Fresh is fresh", func(t *testing.T) {
+	t.Run("exactly Fresh is fresh, with no liveness before it", func(t *testing.T) {
 		r := startRig(t)
 		m := verb10m(t, forwardType)
 		r.e.Verb(m, Fresh, true, 1)
 		if got := r.car.sends(); !slices.Equal(got, []string{string(m.Canonical)}) {
 			t.Fatalf("car got %q, want the verb", got)
 		}
-		if got := r.phone.got(); len(got) != 0 {
-			t.Fatalf("phone got %v", got)
+	})
+}
+
+func TestStaleVerbStartingAHoldNeedsLiveness(t *testing.T) {
+	refused := func(t *testing.T, r *rig, typ string) {
+		t.Helper()
+		if got := r.car.sends(); len(got) != 0 {
+			t.Fatalf("car got %q, want nothing", got)
+		}
+		if r.e.VerbActive() {
+			t.Fatal("a refused verb set verbActive")
+		}
+		got := r.phone.got()
+		if len(got) != 1 {
+			t.Fatalf("phone got %v, want one refusal", got)
+		}
+		assertRefusal(t, got[0], typ, "action_invalid")
+		want := fmt.Sprintf("summon: %s (press 1) refused: no fresh liveness in 800 ms", typ)
+		if !slices.Contains(r.logLines(), want) {
+			t.Fatalf("log lines %q, want %q", r.logLines(), want)
+		}
+	}
+	for _, typ := range verbTypes {
+		t.Run(typ+"/no liveness instant in the session", func(t *testing.T) {
+			r := startRig(t) // the fake clock may read 0, as lastLive's zero value does: liveSet decides
+			r.e.Verb(verb10m(t, typ), staleAge, true, 1)
+			refused(t, r, typ)
+		})
+		t.Run(typ+"/the last one TripAfter + 1 ms before", func(t *testing.T) {
+			r := startRig(t)
+			r.liveAgo(tripMS + 1)
+			r.e.Verb(verb10m(t, typ), 0, false, 1)
+			refused(t, r, typ)
+		})
+	}
+	t.Run("a session within TripAfter of boot has no liveness instant at BOOTTIME 0", func(t *testing.T) {
+		log := &callLog{}
+		car, phone := &fakeCar{log: log}, &fakePhone{log: log}
+		e := NewEngine(Config{Car: car, Phone: phone, Marker: &fakeMarker{log: log}, Clock: bootClock(300)})
+		if err := e.Start(); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		e.Verb(verb10m(t, forwardType), staleAge, true, 1)
+		if got := car.sends(); len(got) != 0 {
+			t.Fatalf("car got %q: lastLive's zero value counted as a liveness instant", got)
+		}
+		if got := phone.got(); len(got) != 1 {
+			t.Fatalf("phone got %v, want one refusal", got)
+		}
+	})
+	t.Run("a stale LIVE or HB is no liveness instant", func(t *testing.T) {
+		r := startRig(t)
+		r.e.Live(staleAge, true)
+		r.e.Heartbeat(heartbeatMsg(t), staleAge, true, 1)
+		r.car.reset()
+		r.e.Verb(verb10m(t, forwardType), staleAge, true, 1)
+		refused(t, r, forwardType)
+	})
+	t.Run("a fresh HB is one", func(t *testing.T) {
+		r := startRig(t)
+		r.e.Heartbeat(heartbeatMsg(t), 0, true, 1)
+		r.clk.Advance(500)
+		r.car.reset()
+		m := verb10m(t, forwardType)
+		r.e.Verb(m, staleAge, true, 1)
+		if got := r.car.sends(); !slices.Equal(got, []string{string(m.Canonical)}) {
+			t.Fatalf("car got %q, want the verb", got)
 		}
 	})
 }
 
-func TestVerbWhileActiveRefused(t *testing.T) {
+func TestAllStaleLinkStopsAfterTheFirstTrip(t *testing.T) {
+	// The concern the stale-start rule closes: on a link where every frame is stale, the phone's re-sends every 250 ms
+	// must not restart the car after each trip. The first stale press, 300 ms after the last fresh LIVE, is forwarded
+	// and trips 500 ms later (TripAfter after the LIVE); after the trip no verb reaches the car, for 10 s of re-sends.
 	r := startRig(t)
+	r.liveAgo(300)
 	first := verb10m(t, forwardType)
-	r.e.Verb(first, 20*time.Millisecond, true, 1)
-	r.clk.Advance(200)
-	r.e.Verb(verb10m(t, reverseType), 20*time.Millisecond, true, 2)
-	if got := r.car.sends(); !slices.Equal(got, []string{string(first.Canonical)}) {
-		t.Fatalf("car got %q, want only the first verb", got)
+	r.e.Verb(first, staleAge, true, 1)
+	for ms := uint64(10); ms <= 10000; ms += 10 {
+		r.clk.Advance(10)
+		if ms%50 == 0 {
+			r.e.Live(staleAge, true)
+		}
+		if ms%100 == 0 {
+			r.e.Heartbeat(heartbeatMsg(t), staleAge, true, 1)
+		}
+		if ms%250 == 0 {
+			r.e.Verb(verb10m(t, forwardType), staleAge, true, 1)
+		}
+		r.e.Tick()
 	}
-	got := r.phone.got()
-	if len(got) != 1 {
-		t.Fatalf("phone got %v, want one refusal", got)
+	if got := r.car.count(string(first.Canonical)); got != 3 {
+		// the first verb, then its re-sends at 250 and 500 ms, before the trip at 501 ms (its tick at 510)
+		t.Fatalf("car got the verb %d times, want 3: only within the first hold", got)
 	}
-	assertRefusal(t, got[0], reverseType, "action_invalid")
-	if !r.e.VerbActive() {
-		t.Fatal("the refusal cleared verbActive")
-	}
-	// A refused verb is not a liveness instant: the trip still fires TripAfter + 1 ms after the first verb.
-	r.step(tripMS - 200)
-	if n := r.aborts(); n != 0 {
-		t.Fatalf("%d aborts TripAfter after the first verb", n)
-	}
-	r.step(1)
 	if n := r.aborts(); n != 1 {
-		t.Fatalf("%d aborts TripAfter + 1 ms after the first verb, want 1: the refused verb stamped liveness", n)
+		t.Fatalf("%d aborts, want the one trip", n)
 	}
+	if got := r.car.sends(); got[len(got)-1] != AbortJSON {
+		t.Fatalf("the car's last input is %s, want the trip's abort", got[len(got)-1])
+	}
+	refusals := 0
+	for _, f := range r.phone.got() {
+		assertRefusal(t, f, forwardType, "action_invalid")
+		refusals++
+	}
+	if want := (10000 - 750) / 250; refusals != want+1 { // every re-send from 750 ms to 10000 ms
+		t.Fatalf("%d refusals, want %d", refusals, want+1)
+	}
+}
+
+func TestHealthyLinkOccasionalStaleVerbForwarded(t *testing.T) {
+	// Fresh LIVEs every 50 ms: a stale re-send replaces the hold, and a stale press that starts a new hold after a
+	// release goes through too.
+	r := startRig(t)
+	m := verb10m(t, forwardType)
+	r.e.Verb(m, 0, true, 1)
+	for ms := uint64(10); ms <= 3000; ms += 10 {
+		r.clk.Advance(10)
+		if ms%50 == 0 {
+			r.e.Live(20*time.Millisecond, true)
+		}
+		if ms%250 == 0 {
+			if ms%1000 == 0 {
+				r.e.Verb(m, staleAge, true, 1) // an occasional late one
+			} else {
+				r.e.Verb(m, 30*time.Millisecond, true, 1)
+			}
+		}
+		r.e.Tick()
+	}
+	if n := r.aborts(); n != 0 {
+		t.Fatalf("%d aborts on a healthy link", n)
+	}
+	if got := r.car.count(string(m.Canonical)); got != 13 {
+		t.Fatalf("car got the verb %d times, want 13", got)
+	}
+	r.e.Msg(abortMsg(t))
+	r.clk.Advance(40)
+	r.e.Verb(verb10m(t, reverseType), staleAge, true, 2) // a stale press 40 ms after a fresh LIVE
+	if !r.e.VerbActive() {
+		t.Fatal("the stale press was not forwarded")
+	}
+	if got := r.phone.got(); len(got) != 0 {
+		t.Fatalf("phone got %v", got)
+	}
+}
+
+func TestStaleVerbIsNotLiveness(t *testing.T) {
+	t.Run("a stale press 300 ms after a fresh LIVE trips TripAfter + 1 ms after that LIVE", func(t *testing.T) {
+		r := startRig(t)
+		r.liveAgo(300)
+		m := verb10m(t, forwardType)
+		r.e.Verb(m, staleAge, true, 1)
+		if got := r.car.sends(); !slices.Equal(got, []string{string(m.Canonical)}) {
+			t.Fatalf("car got %q, want the stale verb", got)
+		}
+		r.e.Live(staleAge, true) // stale LIVEs are no liveness instant either
+		r.e.Live(0, false)
+		r.step(tripMS - 300) // 500 ms after the hold's start, TripAfter after the LIVE
+		if n := r.aborts(); n != 0 {
+			t.Fatalf("%d aborts TripAfter after the LIVE", n)
+		}
+		r.step(1)
+		if n := r.aborts(); n != 1 {
+			t.Fatalf("%d aborts 501 ms after the stale verb (TripAfter + 1 ms after the LIVE), want 1: a stale verb started a trip clock of its own", n)
+		}
+		if r.e.VerbActive() {
+			t.Fatal("verbActive after the trip")
+		}
+	})
+	t.Run("stale re-sends every 250 ms never keep the hold alive", func(t *testing.T) {
+		for _, first := range []struct {
+			name  string
+			age   time.Duration
+			tripB uint64 // the trip comes TripAfter + 1 ms after this many ms before the first verb
+		}{{"a fresh first verb", 0, 0}, {"a stale first verb", staleAge, 100}} {
+			t.Run(first.name, func(t *testing.T) {
+				r := startRig(t)
+				r.liveAgo(100)
+				r.e.Verb(verb10m(t, forwardType), first.age, true, 1)
+				for ms := uint64(10); ms <= tripMS-first.tripB; ms += 10 {
+					r.clk.Advance(10)
+					if ms%250 == 0 {
+						r.e.Verb(verb10m(t, forwardType), staleAge, true, 1) // the phone's re-send while held
+					}
+					r.e.Tick()
+				}
+				if n := r.aborts(); n != 0 {
+					t.Fatalf("%d aborts by TripAfter", n)
+				}
+				r.step(1)
+				if n := r.aborts(); n != 1 {
+					t.Fatalf("%d aborts at TripAfter + 1 ms, want 1: a stale re-send stamped liveness", n)
+				}
+			})
+		}
+	})
+	t.Run("fresh re-sends keep the hold alive", func(t *testing.T) {
+		r := startRig(t)
+		r.e.Verb(verb10m(t, forwardType), 0, true, 1)
+		for ms := uint64(10); ms <= 3000; ms += 10 {
+			r.clk.Advance(10)
+			if ms%250 == 0 {
+				r.e.Verb(verb10m(t, forwardType), Fresh, true, 1)
+			}
+			r.e.Tick()
+		}
+		if n := r.aborts(); n != 0 {
+			t.Fatalf("%d aborts while fresh re-sends arrived every 250 ms", n)
+		}
+	})
+	t.Run("a stale verb that replaces an active one keeps the hold's trip clock", func(t *testing.T) {
+		r := startRig(t)
+		r.e.Verb(verb10m(t, forwardType), 0, true, 1)
+		r.clk.Advance(300)
+		r.e.Live(0, true) // the hold's latest liveness instant, at 300
+		r.clk.Advance(400)
+		r.e.Verb(verb10m(t, reverseType), staleAge, true, 2) // at 700
+		r.step(tripMS - 400)                                 // TripAfter after the LIVE
+		if n := r.aborts(); n != 0 {
+			t.Fatalf("%d aborts TripAfter after the last liveness instant", n)
+		}
+		r.step(1)
+		if n := r.aborts(); n != 1 {
+			t.Fatalf("%d aborts TripAfter + 1 ms after the last liveness instant, want 1: the stale verb reset the clock", n)
+		}
+	})
+	t.Run("a stale verb after a trip, and a fresh LIVE, clears tripped", func(t *testing.T) {
+		r := startRig(t)
+		r.e.Verb(verb10m(t, forwardType), 0, true, 1)
+		r.step(tripMS + 1)
+		hb := heartbeatMsg(t)
+		r.car.reset()
+		r.e.Heartbeat(hb, 0, true, 1) // fresh, so a liveness instant, but not forwarded after the trip
+		if got := r.car.sends(); len(got) != 0 {
+			t.Fatalf("car got %q after the trip", got)
+		}
+		m := verb10m(t, forwardType)
+		r.e.Verb(m, staleAge, true, 2)
+		r.e.Heartbeat(hb, 0, true, 2)
+		if got, want := r.car.sends(), []string{string(m.Canonical), string(hb.Canonical)}; !slices.Equal(got, want) {
+			t.Fatalf("car got %q, want the stale verb, then the fresh heartbeat", got)
+		}
+	})
+}
+
+func TestVerbWhileActiveForwarded(t *testing.T) {
+	// Gate 6 ("one verb at a time") was dropped by owner ruling 2026-11-28: a verb while one is active replaces it.
+	for _, typ := range verbTypes {
+		t.Run(typ, func(t *testing.T) {
+			r := startRig(t)
+			first := verb10m(t, forwardType)
+			r.e.Verb(first, 20*time.Millisecond, true, 1)
+			r.clk.Advance(200)
+			second := verb10m(t, typ)
+			r.e.Verb(second, 20*time.Millisecond, true, 2)
+			if got, want := r.car.sends(), []string{string(first.Canonical), string(second.Canonical)}; !slices.Equal(got, want) {
+				t.Fatalf("car got %q, want both verbs", got)
+			}
+			if got := r.phone.got(); len(got) != 0 {
+				t.Fatalf("phone got %v", got)
+			}
+			if !r.e.VerbActive() {
+				t.Fatal("verbActive is false")
+			}
+			// The fresh second verb is a liveness instant: the trip comes TripAfter + 1 ms after it.
+			r.step(tripMS)
+			if n := r.aborts(); n != 0 {
+				t.Fatalf("%d aborts TripAfter after the second verb", n)
+			}
+			r.step(1)
+			if n := r.aborts(); n != 1 {
+				t.Fatalf("%d aborts TripAfter + 1 ms after the second verb, want 1", n)
+			}
+		})
+	}
+}
+
+// verbLines is the rig's verb log lines: forwarded, refused, and the hold's end.
+func (r *rig) verbLines() []string {
+	var out []string
+	for _, l := range r.logLines() {
+		if strings.Contains(l, "(press ") || strings.HasPrefix(l, "summon: hold ended") {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func TestVerbLogs(t *testing.T) {
+	// A verb line only when a verb starts a hold or changes the verb type; re-sends of the same type are counted and
+	// logged once, when the hold ends.
+	t.Run("the phone's release", func(t *testing.T) {
+		r := startRig(t)
+		fwd, rev := verb10m(t, forwardType), verb10m(t, reverseType)
+		r.e.Verb(fwd, 0, true, 1)
+		for range 5 {
+			r.clk.Advance(250)
+			r.e.Verb(fwd, 20*time.Millisecond, true, 1)
+		}
+		r.clk.Advance(100)
+		r.e.Verb(rev, 20*time.Millisecond, true, 2)
+		r.clk.Advance(250)
+		r.e.Verb(rev, staleAge, true, 2)
+		r.clk.Advance(50)
+		r.e.Live(0, true)
+		r.e.Msg(abortMsg(t))
+		r.e.Msg(abortMsg(t)) // no hold: no line
+		want := []string{
+			"summon: autopark:cmd_forward (press 1, 127 bytes) forwarded",
+			"summon: autopark:cmd_reverse (press 2, 127 bytes) forwarded, replacing the active autopark:cmd_forward (forwarded 100 ms before)",
+			"summon: hold ended: 6 re-sends (1 stale); HB 0 arrived, 0 forwarded, 0 dropped (0 stale, 0 after a trip), longest gap between forwarded none; LIVE 1 arrived, 1 fresh, longest gap between fresh none",
+		}
+		if got := r.verbLines(); !slices.Equal(got, want) {
+			t.Fatalf("verb lines\n%q\nwant\n%q", got, want)
+		}
+	})
+	t.Run("D2's trip, then H4", func(t *testing.T) {
+		r := startRig(t)
+		m := verb10m(t, findMeType)
+		r.e.Verb(m, 0, true, 1)
+		r.clk.Advance(250)
+		r.e.Verb(m, staleAge, true, 1)
+		r.step(tripMS)
+		r.e.Live(0, true)
+		r.e.Verb(m, staleAge, true, 2) // a new hold, stale but 0 ms after a fresh LIVE
+		r.clk.Advance(100)
+		r.e.Verb(m, 0, true, 2)
+		r.e.Stop("close")
+		want := []string{
+			"summon: autopark:cmd_find_me (press 1, 213 bytes) forwarded",
+			"summon: hold ended: 1 re-sends (1 stale); HB 0 arrived, 0 forwarded, 0 dropped (0 stale, 0 after a trip), longest gap between forwarded none; LIVE 0 arrived, 0 fresh, longest gap between fresh none",
+			"summon: autopark:cmd_find_me (press 2, 213 bytes) forwarded, stale tick: not a liveness instant",
+			"summon: hold ended: 1 re-sends (0 stale); HB 0 arrived, 0 forwarded, 0 dropped (0 stale, 0 after a trip), longest gap between forwarded none; LIVE 0 arrived, 0 fresh, longest gap between fresh none",
+		}
+		if got := r.verbLines(); !slices.Equal(got, want) {
+			t.Fatalf("verb lines\n%q\nwant\n%q", got, want)
+		}
+	})
+}
+
+func TestQuickForwardReverseSwitch(t *testing.T) {
+	// The phone switches between Forward and Reverse quickly, and re-sends the held one every 250 ms: every verb goes
+	// to the car in order, with no abort in between, and the hold never trips while the verbs are fresh.
+	r := startRig(t)
+	var want []string
+	seq := []string{forwardType, forwardType, reverseType, forwardType, reverseType, reverseType, forwardType}
+	for i, typ := range seq {
+		m := verb10m(t, typ)
+		r.e.Verb(m, 30*time.Millisecond, true, uint32(i+1))
+		want = append(want, string(m.Canonical))
+		r.step(10)
+		r.clk.Advance(40) // 50 ms between switches
+		r.e.Tick()
+	}
+	if got := r.car.sends(); !slices.Equal(got, want) {
+		t.Fatalf("car got %q, want %q", got, want)
+	}
+	if got := r.phone.got(); len(got) != 0 {
+		t.Fatalf("phone got %v", got)
+	}
+	if !r.e.VerbActive() {
+		t.Fatal("verbActive is false")
+	}
+}
+
+func TestRefusalShape(t *testing.T) {
+	r := startRig(t)
+	r.e.Verb(verb10m(t, reverseType), staleAge, true, 1)
+	got := r.phone.got()
+	want := `{"cmd_type":"autopark:cmd_reverse","msg_type":"autopark:cmd_result","reason":"action_invalid","result":false,"timestamp":1700000000000}`
+	if len(got) != 1 || got[0] != (phoneFrame{0, want}) {
+		t.Fatalf("phone got %v, want %s on dcTcp", got, want)
+	}
+}
+
+func TestRefusalTimestampNeverGoesBack(t *testing.T) {
+	refuse := func(t *testing.T, r *rig) string {
+		t.Helper()
+		r.phone.reset()
+		r.e.Verb(verb10m(t, forwardType), staleAge, true, 1)
+		got := r.phone.got()
+		if len(got) != 1 {
+			t.Fatalf("phone got %v, want one refusal", got)
+		}
+		return refusalTS(t, got[0])
+	}
+	t.Run("a forwarded cmd_result", func(t *testing.T) {
+		r := startRig(t)
+		r.wall.Store(1000)
+		r.e.CarFrame(carlink.ChannelTCP, resultJSON(abortType, true, "", 5000))
+		if ts := refuse(t, r); ts != "5000" {
+			t.Fatalf("timestamp %s with Now 1000 after a cmd_result at 5000, want 5000", ts)
+		}
+		r.wall.Store(9000)
+		if ts := refuse(t, r); ts != "9000" {
+			t.Fatalf("timestamp %s with Now 9000, want 9000", ts)
+		}
+	})
+	t.Run("a swallowed cmd_result counts", func(t *testing.T) {
+		r := startRig(t)
+		r.wall.Store(1000)
+		r.e.Verb(verb10m(t, forwardType), 0, true, 1)
+		r.step(tripMS + 1)
+		r.e.CarFrame(carlink.ChannelTCP, resultJSON(abortType, true, "", 7000))
+		if ts := refuse(t, r); ts != "7000" {
+			t.Fatalf("timestamp %s, want 7000", ts)
+		}
+	})
+	t.Run("only a cmd_result counts; a fractional one rounds up; an absurd one is ignored", func(t *testing.T) {
+		r := startRig(t)
+		r.wall.Store(1000)
+		r.e.CarFrame(carlink.ChannelTCP, []byte(`{"autopark_state":"standby","msg_type":"autopark:status","timestamp":8000}`))
+		r.e.CarFrame(carlink.ChannelTCP, []byte(`{"cmd_type":"autopark:cmd_abort","msg_type":"autopark:cmd_result","reason":"","result":true,"timestamp":1e300}`))
+		if ts := refuse(t, r); ts != "1000" {
+			t.Fatalf("timestamp %s, want 1000", ts)
+		}
+		r.e.CarFrame(carlink.ChannelTCP, []byte(`{"cmd_type":"autopark:cmd_abort","msg_type":"autopark:cmd_result","reason":"","result":true,"timestamp":5000.25}`))
+		if ts := refuse(t, r); ts != "5001" {
+			t.Fatalf("timestamp %s after a cmd_result at 5000.25, want 5001", ts)
+		}
+	})
 }
 
 func TestTripAfter(t *testing.T) {
@@ -846,79 +1252,6 @@ func TestCarRefusalKeepsVerbActive(t *testing.T) {
 	if n := r.aborts(); n != 1 {
 		t.Fatalf("%d aborts at TripAfter + 1 ms, want 1", n)
 	}
-}
-
-func TestRefusalShape(t *testing.T) {
-	r := startRig(t)
-	r.e.Verb(verb10m(t, reverseType), staleAge, true, 1)
-	got := r.phone.got()
-	want := `{"cmd_type":"autopark:cmd_reverse","msg_type":"autopark:cmd_result","reason":"action_invalid","result":false,"timestamp":1700000000000}`
-	if len(got) != 1 || got[0] != (phoneFrame{0, want}) {
-		t.Fatalf("phone got %v, want %s on dcTcp", got, want)
-	}
-	if keys := decode(t, []byte(got[0].data)); len(keys) != 5 {
-		t.Fatalf("the refusal has %d keys, want 5", len(keys))
-	}
-}
-
-func TestRefusalTimestampNeverGoesBack(t *testing.T) {
-	refuse := func(t *testing.T, r *rig) string {
-		t.Helper()
-		r.phone.reset()
-		r.e.Verb(verb10m(t, forwardType), staleAge, true, 1)
-		got := r.phone.got()
-		if len(got) != 1 {
-			t.Fatalf("phone got %v, want one refusal", got)
-		}
-		return refusalTS(t, got[0])
-	}
-	t.Run("a forwarded cmd_result", func(t *testing.T) {
-		r := startRig(t)
-		r.wall.Store(1000)
-		r.e.CarFrame(carlink.ChannelTCP, resultJSON(abortType, true, "", 5000))
-		if ts := refuse(t, r); ts != "5000" {
-			t.Fatalf("timestamp %s with Now 1000 after a cmd_result at 5000, want 5000", ts)
-		}
-		r.wall.Store(9000)
-		if ts := refuse(t, r); ts != "9000" {
-			t.Fatalf("timestamp %s with Now 9000, want 9000", ts)
-		}
-	})
-	t.Run("a swallowed cmd_result counts", func(t *testing.T) {
-		r := startRig(t)
-		r.wall.Store(1000)
-		r.e.Verb(verb10m(t, forwardType), 0, true, 1)
-		r.step(tripMS + 1)
-		r.e.CarFrame(carlink.ChannelTCP, resultJSON(abortType, true, "", 7000))
-		if ts := refuse(t, r); ts != "7000" {
-			t.Fatalf("timestamp %s, want 7000", ts)
-		}
-	})
-	t.Run("only a cmd_result counts", func(t *testing.T) {
-		r := startRig(t)
-		r.wall.Store(1000)
-		r.e.CarFrame(carlink.ChannelTCP, []byte(`{"autopark_state":"standby","msg_type":"autopark:status","timestamp":8000}`))
-		r.e.CarFrame(carlink.ChannelUDP, []byte(`{"car_timestamp":8000,"msg_type":"autopark:heartbeat_car_webrtc","timestamp":8000}`))
-		if ts := refuse(t, r); ts != "1000" {
-			t.Fatalf("timestamp %s, want 1000: only cmd_result timestamps count", ts)
-		}
-	})
-	t.Run("a fractional timestamp rounds up", func(t *testing.T) {
-		r := startRig(t)
-		r.wall.Store(1000)
-		r.e.CarFrame(carlink.ChannelTCP, []byte(`{"cmd_type":"autopark:cmd_abort","msg_type":"autopark:cmd_result","reason":"","result":true,"timestamp":5000.25}`))
-		if ts := refuse(t, r); ts != "5001" {
-			t.Fatalf("timestamp %s after a cmd_result at 5000.25, want 5001", ts)
-		}
-	})
-	t.Run("an absurd timestamp is ignored", func(t *testing.T) {
-		r := startRig(t)
-		r.wall.Store(1000)
-		r.e.CarFrame(carlink.ChannelTCP, []byte(`{"cmd_type":"autopark:cmd_abort","msg_type":"autopark:cmd_result","reason":"","result":true,"timestamp":1e300}`))
-		if ts := refuse(t, r); ts != "1000" {
-			t.Fatalf("timestamp %s, want 1000", ts)
-		}
-	})
 }
 
 func TestStopRunsH4Once(t *testing.T) {
@@ -1412,20 +1745,22 @@ func TestWrongKindEndsSession(t *testing.T) {
 func TestLogsCarryNoPositions(t *testing.T) {
 	r := startRig(t)
 	r.e.Verb(verb10m(t, findMeType), 0, true, 1)
-	r.e.Verb(verb10m(t, forwardType), 0, true, 2)                             // refused: active
-	r.e.Heartbeat(heartbeatMsg(t), 0, true, 1)                                // forwarded
-	r.e.Msg(deviceLocationMsg(t))                                             // forwarded
-	r.e.CarFrame("x", locationJSON(carLat, carLon, "D", 1))                   // dropped and logged
-	r.step(tripMS + 1)                                                        // the trip
-	r.e.CarFrame(carlink.ChannelTCP, resultJSON(abortType, true, "", wallMS)) // swallowed
-	r.e.Verb(verb10m(t, reverseType), staleAge, true, 3)                      // refused: stale
+	r.e.Verb(verb10m(t, forwardType), 0, true, 2)                                   // replaces the active one
+	r.e.Heartbeat(heartbeatMsg(t), 0, true, 1)                                      // forwarded
+	r.e.Msg(deviceLocationMsg(t))                                                   // forwarded
+	r.e.CarFrame("x", locationJSON(carLat, carLon, "D", 1))                         // dropped and logged
+	r.step(tripMS + 1)                                                              // the trip
+	r.e.CarFrame(carlink.ChannelTCP, resultJSON(abortType, true, "", wallMS))       // swallowed
+	r.e.Verb(verb10m(t, reverseType), staleAge, true, 3)                            // stale, no liveness: refused
+	r.e.CarFrame(carlink.ChannelTCP, statusJSON("ready", "", "paused", "", "", "")) // logged
+	r.e.CarFrame(carlink.ChannelTCP, locationJSON(carLat, carLon, "D", 1))          // forwarded
 	r.e.Stop("close")
 	lines := r.logLines()
 	if len(lines) == 0 {
 		t.Fatal("no log lines")
 	}
 	for _, l := range lines {
-		for _, bad := range []string{"52.52", "13.40", "latitude", "longitude", "1700000000"} {
+		for _, bad := range []string{"52.52", "13.40", "latitude", "longitude", "1700000000", "5YJ3"} {
 			if strings.Contains(l, bad) {
 				t.Fatalf("log line %q contains %q", l, bad)
 			}
@@ -1443,7 +1778,7 @@ func TestConfigDefaults(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	before := time.Now().UnixMilli()
-	e.Verb(verb10m(t, forwardType), staleAge, true, 1) // refused, and logged
+	e.Verb(verb10m(t, forwardType), staleAge, true, 1) // refused (no liveness yet), and logged
 	after := time.Now().UnixMilli()
 	got := phone.got()
 	if len(got) != 1 {
@@ -1456,6 +1791,7 @@ func TestConfigDefaults(t *testing.T) {
 	if ts < before || ts > after {
 		t.Fatalf("refusal timestamp %d outside the wall clock's [%d, %d]", ts, before, after)
 	}
+	e.CarFrame(carlink.ChannelTCP, statusJSON("ready", "", "paused", "", "", ""))
 	car.onDisconnect = func() { panic("boom") }
 	defer func() {
 		if p := recover(); p == nil || !strings.Contains(fmt.Sprint(p), "boom") {
@@ -1511,5 +1847,140 @@ func TestConcurrentInputs(t *testing.T) {
 		if c != "marker.clear" && c != "phone.link false" {
 			t.Fatalf("after H4's disconnect: %q", c)
 		}
+	}
+}
+
+// tripLine is the rig's one D2 trip log line.
+func (r *rig) tripLine(t *testing.T) string {
+	t.Helper()
+	var got []string
+	for _, l := range r.logLines() {
+		if strings.HasPrefix(l, "summon: D2 trip: ") {
+			got = append(got, l)
+		}
+	}
+	if len(got) != 1 {
+		t.Fatalf("trip lines %q, want one", got)
+	}
+	return got[0]
+}
+
+func TestTripLogSaysWhy(t *testing.T) {
+	const prefix = "summon: D2 trip: no liveness instant for 801 ms, cmd_abort injected; "
+	t.Run("the phone's frames stopped arriving", func(t *testing.T) {
+		r := startRig(t)
+		r.e.Verb(verb10m(t, forwardType), 0, true, 1)
+		r.clk.Advance(50)
+		r.e.Live(20*time.Millisecond, true)
+		r.e.Heartbeat(heartbeatMsg(t), 20*time.Millisecond, true, 1)
+		r.step(tripMS + 1)
+		want := prefix + "last LIVE arrived 801 ms ago (tick age 20 ms); in the last 800 ms 0 LIVE (0 stale) and 0 HB (0 stale)"
+		if got := r.tripLine(t); got != want {
+			t.Fatalf("trip line\n%q\nwant\n%q", got, want)
+		}
+	})
+	t.Run("they arrived, stale", func(t *testing.T) {
+		r := startRig(t)
+		r.e.Live(staleAge, true) // before the hold, and outside the window at the trip
+		r.clk.Advance(100)
+		r.e.Verb(verb10m(t, forwardType), 0, true, 1)
+		for ms := uint64(10); ms <= tripMS; ms += 10 {
+			r.clk.Advance(10)
+			if ms%50 == 0 {
+				r.e.Live(staleAge, true)
+			}
+			if ms%100 == 0 {
+				r.e.Heartbeat(heartbeatMsg(t), 0, false, 1)
+			}
+			r.e.Tick()
+		}
+		r.step(1)
+		want := prefix + "last LIVE arrived 1 ms ago (tick age 501 ms); in the last 800 ms 16 LIVE (16 stale) and 8 HB (8 stale)"
+		if got := r.tripLine(t); got != want {
+			t.Fatalf("trip line\n%q\nwant\n%q", got, want)
+		}
+	})
+	t.Run("an unknown tick", func(t *testing.T) {
+		r := startRig(t)
+		r.e.Verb(verb10m(t, forwardType), 0, true, 1)
+		r.clk.Advance(100)
+		r.e.Live(0, false)
+		r.step(tripMS - 99) // 801 ms after the verb
+		want := prefix + "last LIVE arrived 701 ms ago (unknown tick); in the last 800 ms 1 LIVE (1 stale) and 0 HB (0 stale)"
+		if got := r.tripLine(t); got != want {
+			t.Fatalf("trip line\n%q\nwant\n%q", got, want)
+		}
+	})
+	t.Run("no LIVE in the session", func(t *testing.T) {
+		r := startRig(t)
+		r.e.Verb(verb10m(t, forwardType), 0, true, 1)
+		r.clk.Advance(10)
+		r.e.Heartbeat(heartbeatMsg(t), staleAge, true, 1)
+		r.step(tripMS - 9)
+		want := prefix + "no LIVE in the session; in the last 800 ms 0 LIVE (0 stale) and 1 HB (1 stale)"
+		if got := r.tripLine(t); got != want {
+			t.Fatalf("trip line\n%q\nwant\n%q", got, want)
+		}
+	})
+	t.Run("a flood fills the ring: the counts are lower bounds", func(t *testing.T) {
+		r := startRig(t)
+		r.e.Verb(verb10m(t, forwardType), 0, true, 1)
+		for range 200 {
+			r.e.Live(staleAge, true)
+		}
+		r.step(tripMS + 1)
+		want := prefix + "last LIVE arrived 801 ms ago (tick age 501 ms); in the last 800 ms 0 LIVE (0 stale) and 0 HB (0 stale)"
+		if got := r.tripLine(t); got != want {
+			t.Fatalf("trip line\n%q\nwant\n%q", got, want)
+		}
+		r.e.Verb(verb10m(t, forwardType), 0, true, 2)
+		r.reset()
+		r.clk.Advance(tripMS)
+		for range 200 {
+			r.e.Live(staleAge, true)
+		}
+		r.step(1)
+		want = "summon: D2 trip: no liveness instant for 801 ms, cmd_abort injected; last LIVE arrived 1 ms ago (tick age 501 ms); in the last 800 ms at least 128 LIVE (128 stale) and 0 HB (0 stale)"
+		if got := r.tripLine(t); got != want {
+			t.Fatalf("trip line\n%q\nwant\n%q", got, want)
+		}
+	})
+}
+
+func TestHoldEndStats(t *testing.T) {
+	r := startRig(t)
+	hb := heartbeatMsg(t)
+	r.e.Heartbeat(hb, 0, true, 1) // before the hold: not counted
+	r.e.Live(0, true)
+	r.e.Verb(verb10m(t, forwardType), 0, true, 1)
+	base := r.clk.BootMS()
+	at := func(ms uint64, f func()) { // ms after the verb
+		r.clk.Advance(base + ms - r.clk.BootMS())
+		f()
+		r.e.Tick()
+	}
+	at(50, func() { r.e.Live(20*time.Millisecond, true) })
+	at(100, func() { r.e.Heartbeat(hb, 20*time.Millisecond, true, 1) })
+	at(150, func() { r.e.Live(staleAge, true) })
+	at(200, func() { r.e.Heartbeat(hb, 20*time.Millisecond, true, 1) })
+	at(300, func() { r.e.Heartbeat(hb, 0, false, 1) })
+	at(400, func() { r.e.Live(0, false) })
+	at(500, func() { r.e.Live(Fresh, true) })
+	at(550, func() { r.e.Heartbeat(hb, staleAge, true, 1) })
+	at(620, func() { r.e.Heartbeat(hb, Fresh, true, 1) })
+	at(700, func() { r.e.Msg(abortMsg(t)) })
+	r.e.Heartbeat(hb, 0, true, 1) // after the hold: not counted
+	r.e.Live(0, true)
+	want := "summon: hold ended: 0 re-sends (0 stale); " +
+		"HB 5 arrived, 3 forwarded, 2 dropped (2 stale, 0 after a trip), longest gap between forwarded 420 ms; " +
+		"LIVE 4 arrived, 2 fresh, longest gap between fresh 450 ms"
+	var got []string
+	for _, l := range r.logLines() {
+		if strings.HasPrefix(l, "summon: hold ended") {
+			got = append(got, l)
+		}
+	}
+	if !slices.Equal(got, []string{want}) {
+		t.Fatalf("hold-end lines\n%q\nwant\n%q", got, want)
 	}
 }

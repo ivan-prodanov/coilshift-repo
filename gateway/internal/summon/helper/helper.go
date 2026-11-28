@@ -52,8 +52,8 @@ var _ summon.Marker = (*marker.File)(nil)
 
 // Config is Serve's configuration. Bus, Oracle, Key, a valid VIN, Socket, MarkerPath and LivePath are required:
 // LivePath has no default, so a caller that forgets it is refused instead of touching /run (R2). A nil RecheckOracle is
-// Oracle, a zero AllowUID is AgwUID (never root), a nil Clock is clock.Boot(), a nil Now time.Now, a nil Logf
-// discards, a nil Exit is os.Exit, and a nil PeerUID is peercred.PeerUID.
+// Oracle, a zero AllowUID is AgwUID (never root), a nil Clock is clock.Boot(), a nil Logf discards, a nil Exit is
+// os.Exit, and a nil PeerUID is peercred.PeerUID.
 //
 // There is no key list: a sign-in is granted when authd lists the phone's key as OWNER or DRIVER (authority.Check),
 // and the server core re-checks an open session's key on its own schedule (internal/server/recheck.go), so a key the
@@ -70,7 +70,6 @@ type Config struct {
 	LivePath    string // camhelper/proto.SummonLivePath (/run/airgapp-summon/live); never derived from MarkerPath
 	LogPath     string // /var/lib/airgapp-summon/state/log
 	Clock       clock.Clock
-	Now         func() time.Time
 	Logf        func(format string, args ...any) // must never block (Global Constraints); logq's in production
 	Exit        func(code int)                   // carlink.WithExit
 	Liveness    bool                             // start supervise.StartLiveness; false only in tests
@@ -112,9 +111,6 @@ func (cfg Config) check() (Config, error) {
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = clock.Boot()
-	}
-	if cfg.Now == nil {
-		cfg.Now = time.Now
 	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
@@ -193,7 +189,6 @@ func Serve(ctx context.Context, cfg Config) error {
 		Car:     car,
 		Marker:  healthyMarker{m: marker.New(cfg.MarkerPath), link: link},
 		Clock:   cfg.Clock,
-		Now:     cfg.Now,
 		Logf:    logf,
 		Healthy: func() bool { return health() }, // PreArm: the predicate that gates OWNED and liveness
 		SetLink: func(degraded bool) {

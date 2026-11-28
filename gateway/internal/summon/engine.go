@@ -10,7 +10,6 @@ import (
 
 	"airgapp/gateway/internal/carlink"
 	"airgapp/gateway/internal/clock"
-	"airgapp/gateway/internal/guards"
 )
 
 // D2's timing values (design §5.2, §6.2) and the CAR frame's channel bytes.
@@ -25,26 +24,26 @@ const (
 	LinkClearFor = 2 * time.Second
 )
 
-// D3's values (design §5.3, plan call 2, Task 7's fix round 1).
-const (
-	FloorM = 3.0 // a verb whose phone position or goal is closer than this to the car is refused (haversine, metres)
-	// StaleAfter: the car position goes stale after more than this much hold time, summed over holds, with no car
-	// frame, or with no location frame after one that showed a speed other than 0 (in gear D or R at speed 0: this
-	// hold's time alone). Only verbActive time counts, from the later of the frame and the verb's forwarding.
-	StaleAfter = time.Second
-)
+// The helper's gates 6-9 are gone (owner ruling 2026-11-28): the car's APE handles obstacles and the goal itself, and
+// on the LTE link the gates misfired. The engine no longer refuses a verb while another is active (gate 6, "one verb
+// at a time") or for a stale tick alone (gate 7, "fresh press"), and D3 is gone: no stale-car-position refusal (gate 8,
+// invalid_vehicle_location) and no 3 m floor (gate 9, location_params_invalid). One refusal stays, to keep D2 sound: a
+// stale verb that would start a hold with no fresh liveness instant in the last TripAfter gets action_invalid
+// (refuseLocked), so an all-stale link cannot drive the car in trip-length pulses.
 
 const (
 	tripMS     = uint64(TripAfter / time.Millisecond)
 	clearForMS = uint64(LinkClearFor / time.Millisecond)
-	staleMS    = uint64(StaleAfter / time.Millisecond)
 
-	cmdResultType       = "autopark:cmd_result"
-	locationType        = "vehicle_data:location"
-	reasonActionInvalid = "action_invalid"
-	reasonTooClose      = "location_params_invalid"  // D3: the phone position or the goal is within FloorM of the car
-	reasonNoCarGPS      = "invalid_vehicle_location" // D3: no car position, or a stale one
-	endReason           = "error"                    // Phone.End's reason: the window closes with BYE "error"
+	cmdResultType = "autopark:cmd_result"
+	statusType    = "autopark:status" // the car's Summon status: logged as it changes, never acted on
+	endReason     = "error"           // Phone.End's reason: the window closes with BYE "error"
+
+	reasonActionInvalid = "action_invalid" // a stale verb that would start a hold with no fresh liveness in TripAfter
+
+	// arrivalKeep is how many LIVE and HB arrivals the engine keeps for the trip's log line: at the phone's 20 Hz LIVE
+	// and 10 Hz HB, TripAfter holds about 24.
+	arrivalKeep = 128
 
 	// maxCarTS is the largest cmd_result timestamp the engine takes (2^53, JavaScript's largest exact integer). A
 	// larger one is ignored, so a refusal's timestamp is always a well-defined int64.
@@ -78,45 +77,56 @@ type Config struct {
 	Car    Car
 	Phone  Phone
 	Marker Marker
-	Clock  clock.Clock                      // BOOTTIME ms: liveness, staleness, the trip
+	Clock  clock.Clock                      // BOOTTIME ms: liveness, the trip
 	Now    func() time.Time                 // wall clock: refusal timestamps
 	Logf   func(format string, args ...any) // never blocks (Global Constraints)
 	Fatal  func(err error)                  // a panic in Stop or Tick; the helper logs it and exits
 }
 
 // Engine is one Summon session between the phone and the car: the deadman D2 with its link flag (design §5.2,
-// §6.2), the 3 m floor D3 with the car position's staleness (§5.3, plan call 2), refusals, and the session end H4
-// (§6.1). It is pure: it starts no goroutines and reads time only from Config.Clock and Config.Now.
+// §6.2), the log of the car's Summon status, and the session end H4 (§6.1). D3 (the 3 m floor and the car position's
+// staleness) and most verb refusals were dropped by owner ruling 2026-11-28. It is pure: it starts no goroutines and
+// reads time only from Config.Clock and Config.Now.
 //
 // One mutex guards it. Car.Send, Phone.Car and Phone.SetLink are called under it; the Link's emit deadline bounds
-// a Send. Phone.End is called only after it is released. Logs carry message types and sizes, never positions.
+// a Send. Phone.End is called only after it is released. Logs carry message types, sizes and the car's status words,
+// never positions, the VIN or keys.
 type Engine struct {
 	cfg Config
 
 	mu         sync.Mutex
-	started    bool   // Start ran
-	stopped    bool   // Stop ran: every input is ignored
-	verbActive bool   // a forwarded verb may be executing on the car
-	tripped    bool   // D2 tripped: no HB is forwarded until the next forwarded verb
-	lastLive   uint64 // BOOTTIME ms of the latest liveness instant
-	swallow    int    // injected aborts whose cmd_result is not forwarded
-	highestTS  int64  // the highest cmd_result timestamp seen in the session, Unix ms
-	sendFailed bool   // a Car.Send failed in the session: H4 never clears the marker
+	started    bool      // Start ran
+	stopped    bool      // Stop ran: every input is ignored
+	verbActive bool      // a forwarded verb may be executing on the car
+	tripped    bool      // D2 tripped: no HB is forwarded until the next forwarded verb
+	lastLive   uint64    // BOOTTIME ms of the latest liveness instant
+	liveSet    bool      // a liveness instant came in the session: lastLive means something
+	holdAt     uint64    // D2's trip floor: a fresh hold-starting verb's forwarding, or a stale one's last liveness instant
+	verbAt     uint64    // BOOTTIME ms when the latest verb was forwarded
+	verbType   string    // the latest forwarded verb's msg_type
+	resends    int       // verbs of the active verb's type that replaced it in this hold, logged at the hold's end
+	staleSends int       // how many of those were stale
+	hold       holdStats // this hold's HB and LIVE arrivals, logged at its end
+	swallow    int       // injected aborts whose cmd_result is not forwarded
+	highestTS  int64     // the highest cmd_result timestamp seen in the session, Unix ms
+	sendFailed bool      // a Car.Send failed in the session: H4 never clears the marker
 
 	link      bool   // the link flag
 	lateRun   int    // LIVE ages over LinkSetAge in a row, in this hold
 	goodRun   bool   // every LIVE age since goodSince was at or under LinkClearAge
 	goodSince uint64 // BOOTTIME ms of the first LIVE of that run
 
-	// D3. The car position is the latest vehicle_data:location relayed in the session. Staleness runs only while
-	// verbActive (staleLocked), and each window sums the quiet time of the holds since its frame (carryLocked).
-	pos        carPos // the car position; pos.ok is false until a readable location frame arrives
-	stale      bool   // the position went stale while verbActive; only a newer location frame clears it
-	lastCarAt  uint64 // BOOTTIME ms of the latest car frame on dcTcp or dcUdp, of any kind
-	lastLocAt  uint64 // BOOTTIME ms of the latest location frame
-	verbAt     uint64 // BOOTTIME ms when the current verb was forwarded
-	frameCarry uint64 // ms of earlier holds since the latest car frame
-	locCarry   uint64 // ms of earlier holds since the latest location frame, if it shows a speed other than 0
+	// Diagnostics for the trip's log line: why no liveness instant came. Never acted on.
+	liveSeen  bool                 // a LIVE arrived in the session, fresh or not
+	liveAt    uint64               // BOOTTIME ms of the latest LIVE's arrival
+	liveAge   time.Duration        // its tick age
+	liveAgeOK bool                 // its tick was known
+	arrivals  [arrivalKeep]arrival // the latest LIVE and HB arrivals, a ring
+	arrNext   int                  // the ring's next slot
+	arrCount  int                  // arrivals recorded, up to arrivalKeep
+
+	status    carStatus // the car's latest autopark:status, as logged
+	hasStatus bool      // an autopark:status arrived in the session
 
 	endAsked bool   // the engine asked for the session's end
 	endNow   string // the Phone.End that unlock delivers
@@ -177,6 +187,7 @@ func (e *Engine) Stop(reason string) {
 	if e.verbActive {
 		abortErr = e.cfg.Car.Send([]byte(AbortJSON))
 		e.verbActive = false
+		e.holdCountLocked()
 	}
 	discErr := e.cfg.Car.Disconnect()
 	cleared := false
@@ -201,21 +212,39 @@ func (e *Engine) Live(age time.Duration, ok bool) {
 		return
 	}
 	now := e.cfg.Clock.BootMS()
-	if fresh(age, ok) {
-		e.lastLive = now
+	isFresh := fresh(age, ok)
+	if isFresh {
+		e.liveLocked(now)
 	}
+	e.liveSeen, e.liveAt, e.liveAge, e.liveAgeOK = true, now, age, ok
+	if e.verbActive {
+		e.hold.liveIn++
+		if isFresh {
+			e.hold.liveFresh.mark(now)
+		}
+	}
+	e.arrivalLocked(now, false, !isFresh)
 	e.linkLocked(age, ok, now)
 }
 
-// Verb is a VERB frame: cmd_find_me, cmd_forward or cmd_reverse. D2's checks, then D3's:
-//  1. while verbActive, it is refused with action_invalid;
-//  2. unless it is fresh, it is refused with action_invalid;
-//  3. D3 (floorLocked): with no car position, or a stale one, it is refused with invalid_vehicle_location; with its
-//     phone position or its goal within FloorM of the car, with location_params_invalid;
-//  4. otherwise m.Canonical goes to the car, verbActive is set, verbAt is stamped, tripped is cleared, and the
-//     forwarding is a liveness instant.
+// Verb is a VERB frame: cmd_find_me, cmd_forward or cmd_reverse. Owner ruling 2026-11-28 dropped gates 6-9 (the
+// car's APE handles obstacles and the goal, and the gates misfired on LTE):
+//   - a verb while verbActive replaces the active one (gate 6, "one verb at a time", is gone): the phone re-sends
+//     cmd_forward or cmd_reverse about every 250 ms while held, and switches between them quickly;
+//   - a stale verb (a late or unknown tick) is forwarded too (gate 7, "fresh press", is gone), with one exception:
+//     a stale verb that would start a hold (no verb active, a trip included) is refused with action_invalid unless a
+//     liveness instant came at most TripAfter before it. Without it an all-stale link re-sending every 250 ms would
+//     restart the car after each trip, moving it in trip-length pulses with no liveness at all;
+//   - D3 is gone: no car-position check, no 3 m floor.
 //
-// pressID is logged; no rule applies to it.
+// A forwarded verb sets verbActive, stamps verbAt and clears tripped. It is a liveness instant only if it is fresh, so
+// D2 stays sound: a stale verb never feeds the deadman. The trip clock of a hold a fresh verb starts begins at its
+// forwarding (holdAt); a stale verb that starts a hold sets holdAt to the last fresh liveness instant, so with no fresh
+// LIVE or HB after it the hold trips TripAfter after that instant: at most TripAfter of motion with no fresh liveness.
+// A verb that replaces an active one leaves holdAt alone, so stale re-sends never keep a hold alive.
+//
+// Logs: a verb that starts a hold, or replaces one of another type, gets a line. A re-send of the active type is only
+// counted, and the count is logged once when the hold ends (holdCountLocked). pressID is logged; no rule applies to it.
 func (e *Engine) Verb(m Message, age time.Duration, ok bool, pressID uint32) {
 	e.mu.Lock()
 	defer e.unlock()
@@ -223,25 +252,43 @@ func (e *Engine) Verb(m Message, age time.Duration, ok bool, pressID uint32) {
 		return
 	}
 	now := e.cfg.Clock.BootMS()
-	if e.verbActive { // 1. one verb at a time
-		e.refuseLocked(m, pressID, reasonActionInvalid)
+	isFresh := fresh(age, ok)
+	// A clock that ran backwards wraps the difference around, which refuses: fail closed.
+	if !e.verbActive && !isFresh && (!e.liveSet || now-e.lastLive > tripMS) {
+		e.cfg.Logf("summon: %s (press %d) refused: no fresh liveness in %d ms", m.Type, pressID, tripMS)
+		e.refuseLocked(m, reasonActionInvalid)
 		return
 	}
-	if !fresh(age, ok) { // 2. a late or unknown tick
-		e.refuseLocked(m, pressID, reasonActionInvalid)
-		return
-	}
-	if reason := e.floorLocked(m); reason != "" { // 3. D3, the 3 m floor
-		e.refuseLocked(m, pressID, reason)
-		return
-	}
-	// 4. Forward. verbActive is set even if Send fails: the verb may have reached the car, so H4 aborts it.
+	// verbActive is set even if Send fails: the verb may have reached the car, so H4 aborts it.
 	err := e.cfg.Car.Send(m.Canonical)
+	stale := ""
+	if !isFresh {
+		stale = ", stale tick: not a liveness instant"
+	}
+	switch {
+	case !e.verbActive:
+		e.holdAt, e.resends, e.staleSends, e.hold = now, 0, 0, holdStats{}
+		if !isFresh {
+			// A stale verb starts no trip clock of its own: the hold trips TripAfter after the last fresh liveness
+			// instant (at most TripAfter ago, as checked above), never later.
+			e.holdAt = e.lastLive
+		}
+		e.cfg.Logf("summon: %s (press %d, %d bytes) forwarded%s", m.Type, pressID, len(m.Canonical), stale)
+	case m.Type != e.verbType:
+		e.cfg.Logf("summon: %s (press %d, %d bytes) forwarded%s, replacing the active %s (forwarded %d ms before)",
+			m.Type, pressID, len(m.Canonical), stale, e.verbType, now-e.verbAt)
+	default:
+		e.resends++
+		if !isFresh {
+			e.staleSends++
+		}
+	}
+	if isFresh {
+		e.liveLocked(now)
+	}
 	e.verbActive = true
-	e.verbAt = now
+	e.verbAt, e.verbType = now, m.Type
 	e.tripped = false
-	e.lastLive = now
-	e.cfg.Logf("summon: %s (press %d, %d bytes) forwarded", m.Type, pressID, len(m.Canonical))
 	if err != nil {
 		e.failLocked(m.Type, err)
 	}
@@ -252,21 +299,37 @@ func (e *Engine) Verb(m Message, age time.Duration, ok bool, pressID uint32) {
 func (e *Engine) Heartbeat(m Message, age time.Duration, ok bool, pressID uint32) {
 	e.mu.Lock()
 	defer e.unlock()
-	if e.stopped || !e.kindLocked(m, KindHeartbeat) || !fresh(age, ok) {
+	if e.stopped || !e.kindLocked(m, KindHeartbeat) {
 		return
 	}
-	e.lastLive = e.cfg.Clock.BootMS()
-	if e.tripped {
+	now := e.cfg.Clock.BootMS()
+	e.arrivalLocked(now, true, !fresh(age, ok))
+	if e.verbActive {
+		e.hold.hbIn++
+	}
+	if !fresh(age, ok) {
+		if e.verbActive {
+			e.hold.hbStale++
+		}
 		return
+	}
+	e.liveLocked(now)
+	if e.tripped {
+		if e.verbActive { // never: a forwarded verb clears tripped; kept so the counts always add up
+			e.hold.hbTripped++
+		}
+		return
+	}
+	if e.verbActive {
+		e.hold.hbFwd.mark(now)
 	}
 	if err := e.cfg.Car.Send(m.Canonical); err != nil {
 		e.failLocked(m.Type, err)
 	}
 }
 
-// Msg is a MSG frame. cmd_abort always goes to the car as AbortJSON, and ends the hold: D3 checks the hold and carries
-// its quiet time (if a verb was active), then verbActive and the link flag clear. device_location, info and
-// control:keepalive go as they came; D3 never checks them. None of them is a liveness instant.
+// Msg is a MSG frame. cmd_abort always goes to the car as AbortJSON, and ends the hold: verbActive and the link flag
+// clear. device_location, info and control:keepalive go as they came. None of them is a liveness instant.
 func (e *Engine) Msg(m Message) {
 	e.mu.Lock()
 	defer e.unlock()
@@ -275,10 +338,8 @@ func (e *Engine) Msg(m Message) {
 	}
 	if m.Type == abortType {
 		err := e.cfg.Car.Send([]byte(AbortJSON))
-		if e.verbActive { // D3 at the release, as at a tick: a release between two ticks must not escape
-			now := e.cfg.Clock.BootMS()
-			e.staleLocked(now)
-			e.carryLocked(now)
+		if e.verbActive {
+			e.holdCountLocked()
 		}
 		e.verbActive = false
 		e.holdEndedLocked()
@@ -293,10 +354,9 @@ func (e *Engine) Msg(m Message) {
 }
 
 // CarFrame is one frame from the car, in the car's order, with its D-Bus channel.
-//   - A frame on a channel other than dcTcp and dcUdp is dropped and logged. D3 does not see it.
-//   - D3: every other frame stamps lastCarAt and resets the frame carry, and a vehicle_data:location becomes the car
-//     position (locationLocked).
-//   - Every autopark:cmd_result raises the highest timestamp seen.
+//   - A frame on a channel other than dcTcp and dcUdp is dropped and logged.
+//   - An autopark:status is logged when its Summon fields differ from the session's previous one (statusLocked).
+//   - Every autopark:cmd_result raises the highest timestamp seen (refuseLocked's floor).
 //   - The cmd_result of an abort the engine injected is swallowed: one per injected abort.
 //   - A car refusal (result false) does not clear verbActive (design §5.2 overrides Appendix A §2.6).
 //   - Everything else goes to the phone, dcTcp as ChanTCP and dcUdp as ChanUDP. A phone link that cannot take a
@@ -318,10 +378,8 @@ func (e *Engine) CarFrame(channel string, data []byte) {
 		e.cfg.Logf("summon: car frame on channel %.16q dropped (%.64q, %d bytes)", channel, head.msgType, len(data))
 		return
 	}
-	now := e.cfg.Clock.BootMS()
-	e.lastCarAt, e.frameCarry = now, 0 // any frame, the swallowed one too: the car's stream is alive
-	if head.msgType == locationType {
-		e.locationLocked(head.pos, now)
+	if head.msgType == statusType {
+		e.statusLocked(head.status)
 	}
 	if head.msgType == cmdResultType {
 		if head.hasTS && head.ts > e.highestTS {
@@ -336,10 +394,10 @@ func (e *Engine) CarFrame(channel string, data []byte) {
 	e.toPhoneLocked(ch, data, head.msgType)
 }
 
-// Tick is run every 10 ms by the D2 loop, and does nothing unless a verb is active. It first applies D3's staleness
-// rules (staleLocked), then D2's trip: if no liveness instant came for more than TripAfter, it injects cmd_abort; D3
-// carries the hold's quiet time, one more abort cmd_result will be swallowed, verbActive clears, and no HB is forwarded
-// until the next forwarded verb. The session continues, and the phone learns nothing. A panic goes to Config.Fatal.
+// Tick is run every 10 ms by the D2 loop, and does nothing unless a verb is active. D2's trip: if no liveness instant
+// came for more than TripAfter, counted from the later of the latest liveness instant and the hold's start (holdAt), it
+// injects cmd_abort and logs why (tripWhyLocked); one more abort cmd_result will be swallowed, verbActive clears, and no HB is forwarded until the
+// next forwarded verb. The session continues, and the phone learns nothing. A panic goes to Config.Fatal.
 func (e *Engine) Tick() {
 	defer e.recoverTo("Tick")
 	e.mu.Lock()
@@ -348,19 +406,18 @@ func (e *Engine) Tick() {
 		return
 	}
 	now := e.cfg.Clock.BootMS()
-	e.staleLocked(now)
 	// A clock that ran backwards wraps the difference around, which trips: fail closed.
-	idle := now - e.lastLive
+	idle := now - max(e.lastLive, e.holdAt)
 	if idle <= tripMS {
 		return
 	}
 	err := e.cfg.Car.Send([]byte(AbortJSON))
 	e.swallow++
-	e.carryLocked(now) // D3: the trip ends the hold; staleLocked already checked it at now
 	e.verbActive = false
 	e.tripped = true
 	e.holdEndedLocked()
-	e.cfg.Logf("summon: D2 trip: no liveness instant for %d ms, cmd_abort injected", idle)
+	e.cfg.Logf("summon: D2 trip: no liveness instant for %d ms, cmd_abort injected; %s", idle, e.tripWhyLocked(now))
+	e.holdCountLocked()
 	if err != nil {
 		e.failLocked("the injected cmd_abort", err)
 	}
@@ -375,6 +432,126 @@ func (e *Engine) VerbActive() bool {
 
 // fresh is D2's freshness: the frame's tick is known and at most Fresh old.
 func fresh(age time.Duration, ok bool) bool { return ok && age <= Fresh }
+
+// liveLocked stamps a liveness instant: a fresh LIVE, HB or verb.
+func (e *Engine) liveLocked(now uint64) {
+	e.lastLive, e.liveSet = now, true
+}
+
+// arrival is one LIVE or HB frame's arrival, for the trip's log line.
+type arrival struct {
+	at    uint64 // BOOTTIME ms
+	hb    bool   // an HB; else a LIVE
+	stale bool   // its tick was unknown or older than Fresh
+}
+
+// arrivalLocked records a LIVE or HB arrival in the ring.
+func (e *Engine) arrivalLocked(now uint64, hb, stale bool) {
+	e.arrivals[e.arrNext] = arrival{at: now, hb: hb, stale: stale}
+	e.arrNext = (e.arrNext + 1) % arrivalKeep
+	e.arrCount = min(e.arrCount+1, arrivalKeep)
+}
+
+// tripWhyLocked says why no liveness instant came, to tell "the phone's frames stopped arriving" from "they arrived,
+// stale": the latest LIVE's arrival and tick age, and the LIVE and HB arrivals of the last TripAfter with how many were
+// stale. When every kept arrival is within TripAfter, the counts are lower bounds ("at least").
+func (e *Engine) tripWhyLocked(now uint64) string {
+	last := "no LIVE in the session"
+	if e.liveSeen {
+		tick := "unknown tick"
+		if e.liveAgeOK {
+			tick = fmt.Sprintf("tick age %d ms", e.liveAge.Milliseconds())
+		}
+		last = fmt.Sprintf("last LIVE arrived %d ms ago (%s)", now-e.liveAt, tick)
+	}
+	var lives, staleLives, hbs, staleHBs, in int
+	for i := range e.arrCount {
+		a := e.arrivals[i]
+		if now-a.at > tripMS { // a clock that ran backwards wraps around: not counted
+			continue
+		}
+		in++
+		switch {
+		case a.hb:
+			hbs++
+			if a.stale {
+				staleHBs++
+			}
+		default:
+			lives++
+			if a.stale {
+				staleLives++
+			}
+		}
+	}
+	bound := ""
+	if in == arrivalKeep {
+		bound = "at least "
+	}
+	return fmt.Sprintf("%s; in the last %d ms %s%d LIVE (%d stale) and %d HB (%d stale)", last, tripMS, bound, lives,
+		staleLives, hbs, staleHBs)
+}
+
+// holdStats is one hold's HB and LIVE arrivals, for its end's log line. Only frames that arrive while the hold is
+// active count.
+type holdStats struct {
+	hbIn, hbStale, hbTripped int    // HBs arrived; dropped as stale; dropped after a trip
+	hbFwd                    series // HBs forwarded to the car
+	liveIn                   int    // LIVEs arrived
+	liveFresh                series // fresh LIVEs
+}
+
+// series counts events and keeps the longest gap between two consecutive ones.
+type series struct {
+	n       int
+	last    uint64 // BOOTTIME ms of the latest event
+	longest uint64 // ms
+}
+
+func (s *series) mark(now uint64) {
+	if s.n > 0 && now >= s.last {
+		s.longest = max(s.longest, now-s.last)
+	}
+	s.n++
+	s.last = now
+}
+
+// gapText is the longest gap, or "none" with fewer than two events.
+func (s series) gapText() string {
+	if s.n < 2 {
+		return "none"
+	}
+	return fmt.Sprintf("%d ms", s.longest)
+}
+
+// holdCountLocked logs, once per hold, how many re-sends of the active verb's type the hold took and how many of them
+// were stale, and the hold's HB and LIVE arrivals (holdStats). The phone's release, D2's trip and H4 end a hold.
+func (e *Engine) holdCountLocked() {
+	h := e.hold
+	e.cfg.Logf("summon: hold ended: %d re-sends (%d stale); "+
+		"HB %d arrived, %d forwarded, %d dropped (%d stale, %d after a trip), longest gap between forwarded %s; "+
+		"LIVE %d arrived, %d fresh, longest gap between fresh %s",
+		e.resends, e.staleSends, h.hbIn, h.hbFwd.n, h.hbStale+h.hbTripped, h.hbStale, h.hbTripped, h.hbFwd.gapText(),
+		h.liveIn, h.liveFresh.n, h.liveFresh.gapText())
+	e.resends, e.staleSends, e.hold = 0, 0, holdStats{}
+}
+
+// refusal is the helper's cmd_result for a refused verb. Its keys are in Go's sorted order, as QtCarServer's are.
+type refusal struct {
+	CmdType   string `json:"cmd_type"`
+	MsgType   string `json:"msg_type"`
+	Reason    string `json:"reason"`
+	Result    bool   `json:"result"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// refuseLocked answers a refused verb on dcTcp. Its timestamp is never below a cmd_result timestamp seen in the
+// session, because Tesla's app drops stale results while it waits for a command response.
+func (e *Engine) refuseLocked(m Message, reason string) {
+	ts := max(e.cfg.Now().UnixMilli(), e.highestTS)
+	b, _ := json.Marshal(refusal{CmdType: m.Type, MsgType: cmdResultType, Reason: reason, Timestamp: ts}) // cannot fail
+	e.toPhoneLocked(ChanTCP, b, cmdResultType)
+}
 
 // kindOf is the frame kind a msg_type travels in (schema.go's table), or 0 for none.
 func kindOf(msgType string) Kind {
@@ -392,24 +569,6 @@ func (e *Engine) kindLocked(m Message, k Kind) bool {
 	}
 	e.endLocked(fmt.Sprintf("%.64q in frame kind %d", m.Type, k))
 	return false
-}
-
-// refusal is the helper's cmd_result for a refused verb. Its keys are in Go's sorted order, as QtCarServer's are.
-type refusal struct {
-	CmdType   string `json:"cmd_type"`
-	MsgType   string `json:"msg_type"`
-	Reason    string `json:"reason"`
-	Result    bool   `json:"result"`
-	Timestamp int64  `json:"timestamp"`
-}
-
-// refuseLocked answers a refused verb on dcTcp. Its timestamp is never below a cmd_result timestamp seen in the
-// session, because Tesla's app drops stale results while it waits for a command response.
-func (e *Engine) refuseLocked(m Message, pressID uint32, reason string) {
-	ts := max(e.cfg.Now().UnixMilli(), e.highestTS)
-	b, _ := json.Marshal(refusal{CmdType: m.Type, MsgType: cmdResultType, Reason: reason, Timestamp: ts}) // cannot fail
-	e.cfg.Logf("summon: %s (press %d) refused: %s", m.Type, pressID, reason)
-	e.toPhoneLocked(ChanTCP, b, cmdResultType)
 }
 
 // toPhoneLocked hands a CAR frame to the phone. If the phone link cannot take it, the session ends: Tesla's app has no
@@ -461,112 +620,20 @@ func (e *Engine) setLinkLocked(degraded bool) {
 	e.cfg.Phone.SetLink(degraded)
 }
 
-// carPos is the car position as D3 knows it, from a vehicle_data:location frame.
-type carPos struct {
-	ok       bool    // the frame was readable
-	lat, lon float64 // degrees
-	speed    float64
-	shift    string // shift_state: Invalid, P, R, N, D or SNA
+// carStatus is the car's Summon status, from an autopark:status frame. A field the frame lacks is "".
+type carStatus struct {
+	autopark, autoparkReason, smart, wait, abort, unavailable string
 }
 
-// rolling reports whether the location showed a speed other than 0 (the firmware's speed may be signed).
-func (p carPos) rolling() bool { return p.speed != 0 }
-
-// inDriveGear reports whether the location showed gear D or R.
-func (p carPos) inDriveGear() bool { return p.shift == "D" || p.shift == "R" }
-
-// floorLocked is D3 at a verb (design §5.3): the reason to refuse it, or "" to forward it.
-//   - No car position, or a stale one: invalid_vehicle_location.
-//   - Its phone position or its goal (goalOf) outside WGS84's ranges: location_params_invalid (R28). Such values could
-//     wrap onto the car's own position in the car's encoding, and Tesla's app never presses without a fix.
-//   - Its phone position or its goal under FloorM from the car: location_params_invalid. The test is !(d >= FloorM),
-//     so a NaN distance is refused too (R27); since R28 only an absurd car position can still make one.
-func (e *Engine) floorLocked(m Message) string {
-	if !e.pos.ok || e.stale {
-		return reasonNoCarGPS
-	}
-	glat, glon := goalOf(m)
-	if !latLonInRange(m.Lat, m.Lon) || !latLonInRange(glat, glon) {
-		return reasonTooClose
-	}
-	phone := guards.DistanceM(e.pos.lat, e.pos.lon, m.Lat, m.Lon)
-	goal := guards.DistanceM(e.pos.lat, e.pos.lon, glat, glon)
-	if !(phone >= FloorM) || !(goal >= FloorM) {
-		return reasonTooClose
-	}
-	return ""
-}
-
-// latLonInRange reports whether a position is within WGS84's ranges, the edges included. NaN is not.
-func latLonInRange(lat, lon float64) bool {
-	return lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180
-}
-
-// staleLocked is D3's staleness. It runs only while verbActive: in Tick, and at the phone's release before verbActive
-// clears. A window's quiet time is this hold's, measured from the later of its frame and verbAt, summed with the
-// earlier holds' since that frame (the carries, which carryLocked adds when a hold ends). Time between holds never
-// counts, since this car sends nothing between holds. The position goes stale when
-//   - no car frame of any kind came for more than StaleAfter of holds; or
-//   - the last location showed a speed other than 0, and no location frame came for more than StaleAfter of holds; or
-//   - the last location showed gear D or R at speed 0, and no location frame came for more than StaleAfter of this
-//     hold alone (plan call 2's remaining case: the car resends its location only on a change).
-//
-// A stale position stays stale until a newer location frame (locationLocked). A clock that ran backwards wraps a
-// difference around, and the sums saturate, so it makes the position stale: fail closed.
-func (e *Engine) staleLocked(now uint64) {
-	if !e.pos.ok || e.stale {
+// statusLocked logs the car's Summon status when it differs from the session's previous one: one line per change,
+// none for a repeat. Each value is quoted and cut at 48 bytes, since the car chose it.
+func (e *Engine) statusLocked(st carStatus) {
+	if e.hasStatus && st == e.status {
 		return
 	}
-	if quiet := satAdd(e.frameCarry, now-max(e.lastCarAt, e.verbAt)); quiet > staleMS {
-		e.stale = true
-		e.cfg.Logf("summon: D3: the car position is stale: no car frame for %d ms of hold time", quiet)
-		return
-	}
-	quiet := now - max(e.lastLocAt, e.verbAt)
-	switch {
-	case e.pos.rolling():
-		quiet = satAdd(e.locCarry, quiet)
-	case e.pos.inDriveGear(): // this hold alone
-	default:
-		return
-	}
-	if quiet > staleMS {
-		e.stale = true
-		e.cfg.Logf("summon: D3: the car position is stale: no location for %d ms of hold time after a moving one",
-			quiet)
-	}
-}
-
-// carryLocked: the phone's release or D2's trip ended a hold, and staleLocked has checked it at now. It adds the hold's
-// quiet time to the frame carry, and to the location carry while the last location shows a speed other than 0. Gear
-// D or R at speed 0 keeps a per-hold window.
-func (e *Engine) carryLocked(now uint64) {
-	e.frameCarry = satAdd(e.frameCarry, now-max(e.lastCarAt, e.verbAt))
-	if e.pos.rolling() {
-		e.locCarry = satAdd(e.locCarry, now-max(e.lastLocAt, e.verbAt))
-	}
-}
-
-// satAdd is a + b, saturating at the largest uint64: a wrapped sum could bring a clock that ran backwards back under
-// StaleAfter.
-func satAdd(a, b uint64) uint64 {
-	if s := a + b; s >= a {
-		return s
-	}
-	return math.MaxUint64
-}
-
-// locationLocked takes a vehicle_data:location frame as the car position, which makes a stale position current and
-// resets the location carry. The car sends one only when something changed, so a frame the engine cannot read leaves no
-// car position: verbs are refused until a readable one arrives.
-func (e *Engine) locationLocked(p carPos, now uint64) {
-	switch {
-	case !p.ok:
-		e.cfg.Logf("summon: D3: a location frame without a readable position: no car position")
-	case e.stale:
-		e.cfg.Logf("summon: D3: a location frame: the car position is current again")
-	}
-	e.pos, e.stale, e.lastLocAt, e.locCarry = p, false, now, 0
+	e.status, e.hasStatus = st, true
+	e.cfg.Logf("summon: car status autopark=%.48q reason=%.48q smart=%.48q wait=%.48q abort=%.48q unavailable=%.48q",
+		st.autopark, st.autoparkReason, st.smart, st.wait, st.abort, st.unavailable)
 }
 
 // failLocked: a Car.Send failed (a verb, a heartbeat, a message, the phone's abort or the trip's). The session ends,
@@ -604,14 +671,14 @@ func (e *Engine) recoverTo(where string) {
 	}
 }
 
-// carHead is what the engine reads from a car frame. CarFrame uses cmdType and ts only for a cmd_result, and pos only
-// for a vehicle_data:location.
+// carHead is what the engine reads from a car frame. CarFrame uses cmdType and ts only for a cmd_result, and status
+// only for an autopark:status.
 type carHead struct {
 	msgType string
 	cmdType string
 	ts      int64 // rounded up, so a refusal never goes below it
 	hasTS   bool
-	pos     carPos
+	status  carStatus
 }
 
 // readCarHead parses a car frame. A frame that is not a JSON object has an empty head and is forwarded as it is.
@@ -626,21 +693,32 @@ func readCarHead(data []byte) carHead {
 	if f, ok := obj["timestamp"].(float64); ok && f >= 0 && f <= maxCarTS {
 		h.ts, h.hasTS = int64(math.Ceil(f)), true
 	}
-	if h.msgType == locationType {
-		h.pos = readCarPos(obj)
+	if h.msgType == statusType {
+		h.status = readCarStatus(obj)
 	}
 	return h
 }
 
-// readCarPos reads a location frame. It is readable when latitude, longitude and speed are numbers and shift_state is
-// a string, as the car always sends them (Appendix A §8.6).
-func readCarPos(obj map[string]any) carPos {
-	lat, okLat := obj["latitude"].(float64)
-	lon, okLon := obj["longitude"].(float64)
-	speed, okSpeed := obj["speed"].(float64)
-	shift, okShift := obj["shift_state"].(string)
-	if !okLat || !okLon || !okSpeed || !okShift {
-		return carPos{}
+// readCarStatus reads an autopark:status frame's Summon fields. A string is taken as it is; any other value (a
+// number, say) as its JSON text; a missing one is "".
+func readCarStatus(obj map[string]any) carStatus {
+	field := func(k string) string {
+		v, ok := obj[k]
+		if !ok {
+			return ""
+		}
+		if str, ok := v.(string); ok {
+			return str
+		}
+		b, _ := json.Marshal(v) // a decoded JSON value: cannot fail
+		return string(b)
 	}
-	return carPos{ok: true, lat: lat, lon: lon, speed: speed, shift: shift}
+	return carStatus{
+		autopark:       field("autopark_state"),
+		autoparkReason: field("autopark_state_reason"),
+		smart:          field("smart_summon_state"),
+		wait:           field("smart_summon_last_wait_reason"),
+		abort:          field("smart_summon_last_abort_reason"),
+		unavailable:    field("smart_summon_last_unavailable_reason"),
+	}
 }

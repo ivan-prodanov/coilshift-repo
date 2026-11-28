@@ -232,8 +232,9 @@ func TestSummonStalledLinkTrips(t *testing.T) {
 
 // TestSummonLateLinkTrips is the case freshness exists for: the link delays only Pi→phone by 2 s, and the phone keeps
 // sending LIVE and HB at their usual rate. They arrive on time, but echo old tick ids, so they are stale. Exactly one
-// abort reaches the car within Fresh + TripAfter + 250 ms of the delay starting, no heartbeat is forwarded after it, and a later re-press
-// is refused with action_invalid. No stale heartbeat is forwarded before the trip either: none reaches the car later
+// abort reaches the car within Fresh + TripAfter + 250 ms of the delay starting, no heartbeat is forwarded after it, and a
+// later re-press is refused with action_invalid: it is stale and would start a hold with no fresh liveness instant in
+// the last TripAfter (owner ruling 2026-11-28 keeps only this refusal). No stale heartbeat is forwarded before the trip either: none reaches the car later
 // than F after the delay started, plus 100 ms for the helper's forwarding.
 func TestSummonLateLinkTrips(t *testing.T) {
 	r := startSummonRig(t, summonOpts{})
@@ -272,10 +273,14 @@ func TestSummonLateLinkTrips(t *testing.T) {
 		}
 	}
 
-	// A later re-press, still behind the late link: the tick it echoes is old, so it is refused.
+	// A later re-press, still behind the late link: the tick it echoes is old, and the last fresh frame came well over
+	// TripAfter before it, so it is refused.
 	p.release()
 	p.press(smCmdArrow(smForward, 11), false)
 	p.wantRefusal(p.waitResult(smForward, 2, 5*time.Second), smForward, "action_invalid")
+	if n := r.helperLog.count(smForward + " (press 2) refused: no fresh liveness in 800 ms"); n != 1 {
+		t.Fatalf("the helper logged %d refusals of the re-press, want 1\n%s", n, r.helperLog)
+	}
 	if n := smCountVerbs(r.car.Received()); n != 1 {
 		t.Fatalf("the car received %d verbs, want only the first", n)
 	}
@@ -306,8 +311,8 @@ func TestSummonLateLinkJustOverFreshTrips(t *testing.T) {
 }
 
 // TestSummonDelayedLinkRefusesQueuedVerb: with both directions delayed by 2 s, the phone releases and presses again.
-// The re-press's verb reaches the helper stale and is refused (action_invalid), and the car never receives a second
-// verb.
+// The re-press's verb reaches the helper stale, with no fresh liveness instant in the last TripAfter, and is refused
+// (action_invalid); the car never receives a second verb.
 func TestSummonDelayedLinkRefusesQueuedVerb(t *testing.T) {
 	r := startSummonRig(t, summonOpts{})
 	p := r.phone()
@@ -319,7 +324,7 @@ func TestSummonDelayedLinkRefusesQueuedVerb(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	p.press(smCmdArrow(smForward, 11), false) // queued behind the delay, echoing the newest tick the phone has
 	p.wantRefusal(p.waitResult(smForward, 2, 6*time.Second), smForward, "action_invalid")
-	if n := r.helperLog.count(smForward + " (press 2) refused: action_invalid"); n != 1 {
+	if n := r.helperLog.count(smForward + " (press 2) refused: no fresh liveness in 800 ms"); n != 1 {
 		t.Fatalf("the helper logged %d refusals of the re-press, want 1\n%s", n, r.helperLog)
 	}
 	if n := smCountVerbs(r.car.Received()); n != 1 {
@@ -335,7 +340,9 @@ func TestSummonDelayedLinkRefusesQueuedVerb(t *testing.T) {
 // TestSummonStallThenFlushNothingResumes: the link holds every byte for 2 s while the phone keeps holding, then
 // flushes. No verb or heartbeat in the burst is forwarded, and the car's last message is the injected abort. The
 // burst carries a VERB as well, sent without a release before it, so "no verb" is not vacuous: a release in the burst
-// is always forwarded, and would itself be the car's last message.
+// is always forwarded, and would itself be the car's last message. The burst's verb is stale and arrives after the
+// trip with no fresh liveness instant in the last TripAfter, so it is refused (owner ruling 2026-11-28 keeps only
+// this refusal), and nothing resumes.
 //
 // A native phone sends a LIVE only for each tick it receives (design §5.2), and a stalled link brings none, so the
 // bench phone sends no LIVE while the link holds. Its heartbeats go on (Tesla's timer), and LIVE resumes after the
@@ -373,139 +380,96 @@ func TestSummonStallThenFlushNothingResumes(t *testing.T) {
 	r.wantOneTrip()
 }
 
-// TestSummonVerbWhileActiveRefused: while Forward is active, each verb is refused with action_invalid, and the hold
-// goes on.
-func TestSummonVerbWhileActiveRefused(t *testing.T) {
+// TestSummonVerbWhileActiveReplaces: while Forward is active, each verb is forwarded and replaces it (owner ruling
+// 2026-11-28 dropped "one verb at a time"), Forward and Reverse switch quickly, and the hold goes on until the release.
+func TestSummonVerbWhileActiveReplaces(t *testing.T) {
 	r := startSummonRig(t, summonOpts{})
 	p := r.phone()
 	p.hold(smCmdArrow(smForward, 11))
-	for _, js := range []string{smCmdFindMe(11), smCmdArrow(smForward, 11), smCmdArrow(smReverse, 11)} {
+	seq := []string{smCmdFindMe(11), smCmdArrow(smForward, 11), smCmdArrow(smReverse, 11), smCmdArrow(smForward, 11),
+		smCmdArrow(smReverse, 11)}
+	for i, js := range seq {
 		typ := smMsgTypeOf(js)
 		n := p.countResults(typ) + 1
 		p.verb(js, true)
-		p.wantRefusal(p.waitResult(typ, n, smWait), typ, "action_invalid")
+		if f := p.waitResult(typ, n, smWait); f.obj["result"] != true {
+			t.Fatalf("verb %d: the car refused %s: %s", i, typ, f.raw)
+		}
 	}
-	if n := smCountVerbs(r.car.Received()); n != 1 {
-		t.Fatalf("the car received %d verbs, want only the first", n)
+	if n := smCountVerbs(r.car.Received()); n != 1+len(seq) {
+		t.Fatalf("the car received %d verbs, want all %d", n, 1+len(seq))
 	}
 	if n := smCount(r.carAfterVerb(smForward), smAbort); n != 0 {
 		t.Fatalf("the car received %d aborts while the hold went on, want none", n)
 	}
+	r.waitHelperLog("replacing the active", len(seq))
 	p.release()
 	r.waitCar(smAbort, 1)
+	if v := r.car.Violations(); len(v) > 0 {
+		t.Fatalf("the mock car saw rules broken: %q", v)
+	}
 }
 
-// TestSummonFloor: cmd_find_me, cmd_forward and cmd_reverse from 2 m are each refused with location_params_invalid;
-// from 5 m each is forwarded. Go to Target (cmd_find_me, pin_drop) is where the phone and the goal differ, and each
-// must clear the floor on its own: the phone at 5 m with the goal at 2 m, and the phone at 2 m with the goal at 5 m,
-// are both refused.
-func TestSummonFloor(t *testing.T) {
+// TestSummonNoFloor: owner ruling 2026-11-28 dropped the 3 m floor. cmd_find_me, cmd_forward and cmd_reverse from
+// 2 m are each forwarded, and so is Go to Target (cmd_find_me, pin_drop) with the phone or the goal at 2 m.
+func TestSummonNoFloor(t *testing.T) {
 	smWantDistance(t, 2)
-	smWantDistance(t, 5)
 	r := startSummonRig(t, summonOpts{})
 	p := r.phone()
-	for _, at := range []func(northM float64) string{
-		smCmdFindMe,
-		func(m float64) string { return smCmdArrow(smForward, m) },
-		func(m float64) string { return smCmdArrow(smReverse, m) },
-	} {
-		typ := smMsgTypeOf(at(0))
-		p.verb(at(2), true)
-		p.wantRefusal(p.waitResult(typ, 1, smWait), typ, "location_params_invalid")
-		if n := smCount(r.car.Received(), typ); n != 0 {
-			t.Fatalf("%s from 2 m reached the car", typ)
-		}
-		p.hold(at(5)) // forwarded, and the car answered it
-		if n := smCount(r.car.Received(), typ); n != 1 {
-			t.Fatalf("%s from 5 m: the car received %d, want 1", typ, n)
-		}
+	presses := []string{smCmdFindMe(2), smCmdArrow(smForward, 2), smCmdArrow(smReverse, 2), smCmdGoTo(5, 2),
+		smCmdGoTo(2, 5)}
+	for _, js := range presses {
 		aborts := smCount(r.car.Received(), smAbort)
+		p.hold(js) // forwarded, and the car accepted it
 		p.release()
 		r.waitCar(smAbort, aborts+1)
 		p.waitResult(smAbort, aborts+1, smWait) // Tesla's arrows wait for the abort's result
 	}
-	for _, at := range []struct{ phone, goal float64 }{{5, 2}, {2, 5}} {
-		n := p.countResults(smFindMe) + 1
-		p.verb(smCmdGoTo(at.phone, at.goal), true)
-		p.wantRefusal(p.waitResult(smFindMe, n, smWait), smFindMe, "location_params_invalid")
+	if n := smCountVerbs(r.car.Received()); n != len(presses) {
+		t.Fatalf("the car received %d verbs, want %d", n, len(presses))
 	}
-	if n := smCount(r.car.Received(), smFindMe); n != 1 {
-		t.Fatalf("the car received %d cmd_find_me, want only the 5 m Come to Me", n)
+	if n := r.helperLog.count("refused"); n != 0 {
+		t.Fatalf("the helper logged %d refusals\n%s", n, r.helperLog)
 	}
 	if v := r.car.Violations(); len(v) > 0 {
 		t.Fatalf("the mock car saw rules broken: %q", v)
 	}
 }
 
-// TestSummonStalePosition: mockcar.FreezeAfter(0) during a hold, then a release and a re-press, which is refused with
-// invalid_vehicle_location.
-//
-// Which of D3's staleness rules applies: the first, "no car frame of any kind for more than 1 s of hold time".
-// FreezeAfter(0) stops every frame the mock car sends, the heartbeat echoes included, so no echo keeps the stream
-// alive; the test checks that nothing reaches the phone after the freeze, and that the helper logs that rule's line.
-// So no SetPose is needed: the car stays in P at speed 0, where neither location rule could apply anyway.
+// TestSummonFrozenCarNoRefusal: mockcar.FreezeAfter(0) during a hold (every frame stops, the echoes included), then
+// a release and a re-press 1.2 s past the freeze. Owner ruling 2026-11-28 dropped D3's stale car position: the
+// re-press is forwarded, and the helper answers nothing.
 //
 // The phone uses Come to Me, whose re-press does not wait for the abort's cmd_result: the frozen car never sends one.
-func TestSummonStalePosition(t *testing.T) {
-	const stale = "summon: D3: the car position is stale: no car frame for"
+func TestSummonFrozenCarNoRefusal(t *testing.T) {
+	r := startSummonRig(t, summonOpts{})
+	p := r.phone()
+	p.hold(smCmdFindMe(11))
+	p.waitCar(smHBCar, 2)
 
-	// One hold, 1.2 s past the freeze (R16).
-	t.Run("one hold", func(t *testing.T) {
-		r := startSummonRig(t, summonOpts{})
-		p := r.phone()
-		p.hold(smCmdFindMe(11))
-		p.waitCar(smHBCar, 2)
-
-		r.car.FreezeAfter(0)
-		frozen := time.Now()
-		time.Sleep(100 * time.Millisecond) // what the car had queued before the freeze arrives
-		settled := len(p.frames())
-		time.Sleep(time.Until(frozen.Add(1200 * time.Millisecond)))
-		if n := len(p.frames()); n != settled {
-			t.Fatalf("%d car frames reached the phone after the freeze: the echoes still flow", n-settled)
-		}
-		p.release()
-		p.press(smCmdFindMe(11), true)
-		p.wantRefusal(p.waitResult(smFindMe, 2, smWait), smFindMe, "invalid_vehicle_location")
-		if n := r.helperLog.count(stale); n != 1 {
-			t.Fatalf("D3's first rule logged the staleness %d times, want 1\n%s", n, r.helperLog)
-		}
-		if n := smCountVerbs(r.car.Received()); n != 1 {
-			t.Fatalf("the car received %d verbs, want only the first", n)
-		}
-	})
-
-	// The quiet time carries across holds (plan call 2): otherwise a frozen car could be pressed again for ever in
-	// holds under 1 s. The first hold runs 0.5 s past the freeze, so the re-press is forwarded; the second runs 0.7 s,
-	// under 1 s on its own and over it summed with the first, so the third press is refused.
-	t.Run("the quiet time carries across holds", func(t *testing.T) {
-		r := startSummonRig(t, summonOpts{})
-		p := r.phone()
-		p.hold(smCmdFindMe(11))
-		p.waitCar(smHBCar, 2)
-
-		r.car.FreezeAfter(0)
-		frozen := time.Now()
-		time.Sleep(time.Until(frozen.Add(500 * time.Millisecond)))
-		p.release()
-		p.press(smCmdFindMe(11), true)
-		r.waitCar(smFindMe, 2) // forwarded: 0.5 s of hold time is not stale
-		second := time.Now()
-		time.Sleep(time.Until(second.Add(700 * time.Millisecond)))
-		p.release()
-		p.press(smCmdFindMe(11), true)
-		p.wantRefusal(p.waitResult(smFindMe, 2, smWait), smFindMe, "invalid_vehicle_location")
-		if n := r.helperLog.count(stale); n != 1 {
-			t.Fatalf("D3's first rule logged the staleness %d times, want 1\n%s", n, r.helperLog)
-		}
-		if n := smCountVerbs(r.car.Received()); n != 2 {
-			t.Fatalf("the car received %d verbs, want the first two", n)
-		}
-	})
+	r.car.FreezeAfter(0)
+	frozen := time.Now()
+	time.Sleep(100 * time.Millisecond) // what the car had queued before the freeze arrives
+	settled := len(p.frames())
+	time.Sleep(time.Until(frozen.Add(1200 * time.Millisecond)))
+	if n := len(p.frames()); n != settled {
+		t.Fatalf("%d car frames reached the phone after the freeze: the echoes still flow", n-settled)
+	}
+	p.release()
+	p.press(smCmdFindMe(11), true)
+	r.waitNth(smFindMe, 2)
+	time.Sleep(100 * time.Millisecond)
+	if n := len(p.frames()); n != settled {
+		t.Fatalf("%d CAR frames reached the phone after the freeze: the helper answered the re-press", n-settled)
+	}
+	if n := r.helperLog.count("D3"); n != 0 {
+		t.Fatalf("the helper logged D3 %d times\n%s", n, r.helperLog)
+	}
+	p.release()
 }
 
 // TestSummonDeviceLocationPassesThrough: a device_location 1 m from the car reaches the mock car, canonical, between
-// holds and during one: D3 never checks it.
+// holds and during one: the helper never checks it.
 func TestSummonDeviceLocationPassesThrough(t *testing.T) {
 	smWantDistance(t, 1)
 	r := startSummonRig(t, summonOpts{})
@@ -1020,6 +984,22 @@ func (r *summonRig) waitCarAfterVerb(verbType, kind string, within time.Duration
 
 // carAfter is what the car received after c.
 func (r *summonRig) carAfter(c smCarRec) []mockcar.Received { return r.car.Received()[c.idx+1:] }
+
+// waitNth waits for the car's n-th input of kind, and returns it.
+func (r *summonRig) waitNth(kind string, n int) smCarRec {
+	r.t.Helper()
+	r.waitCar(kind, n)
+	recs := r.car.Received()
+	for i, rec := range recs {
+		if smCarKind(rec) == kind {
+			if n--; n == 0 {
+				return smCarRec{rec, i}
+			}
+		}
+	}
+	r.t.Fatalf("the car's input %q went missing", kind)
+	return smCarRec{}
+}
 
 // carLast is the car's latest input of kind.
 func (r *summonRig) carLast(kind string) mockcar.Received {

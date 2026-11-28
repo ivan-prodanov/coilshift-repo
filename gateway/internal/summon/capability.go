@@ -28,13 +28,12 @@ func InnerSpec() capability.Spec {
 	}
 }
 
-// CapConfig is the capability's dependencies. Car, Marker, Clock and Fatal are required. A nil Now is time.Now, a nil
-// Logf drops the lines, a nil Healthy refuses every PreArm, and a nil SetLink drops the link flag.
+// CapConfig is the capability's dependencies. Car, Marker, Clock and Fatal are required. A nil Logf drops the lines, a
+// nil Healthy refuses every PreArm, and a nil SetLink drops the link flag.
 type CapConfig struct {
 	Car     Car
 	Marker  Marker
 	Clock   clock.Clock                      // BOOTTIME: each engine's clock, and the D2 loop's progress stamps
-	Now     func() time.Time                 // wall clock: refusal timestamps
 	Logf    func(format string, args ...any) // never blocks (Global Constraints): it runs on godbus's read goroutine
 	Healthy func() bool                      // the link is owned and healthy; checked by PreArm
 	SetLink func(bool)                       // writes a LINK record (the helper's relay listener); never blocks (R11)
@@ -78,9 +77,6 @@ var _ capability.Capability = (*Capability)(nil)
 func NewCapability(cfg CapConfig) *Capability {
 	if cfg.Car == nil || cfg.Marker == nil || cfg.Clock == nil || cfg.Fatal == nil {
 		panic("summon: CapConfig needs Car, Marker, Clock and Fatal")
-	}
-	if cfg.Now == nil {
-		cfg.Now = time.Now
 	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
@@ -133,7 +129,6 @@ func (c *Capability) Open(_ context.Context, w capability.Window, params json.Ra
 		Phone:  windowPhone{s},
 		Marker: c.cfg.Marker,
 		Clock:  c.cfg.Clock,
-		Now:    c.cfg.Now,
 		Logf:   c.cfg.Logf,
 		Fatal:  c.cfg.Fatal,
 	})
