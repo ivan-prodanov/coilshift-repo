@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "io.github.ivan-prodanov.close-on-lock",
+  "version": "1.0.0",
+  "sdk": ">=1.0 <2",
+  "title": "Close frunk & trunk on lock",
+  "summary": "On every lock, unless in a driving gear: an open trunk closes, and an open frunk gets the open command again, which closes an aftermarket power frunk (a stock one ignores it). Sends the touchscreen's own trunk/frunk requests; reads lock, door and gear state twice a second.",
+  "capabilities": [
+    "service"
+  ],
+  "hooks": {
+    "service": [
+      {
+        "id": "closeonlock",
+        "run": "bin/cs-closeonlock.sh",
+        "restart": "always"
+      }
+    ]
+  }
+}
