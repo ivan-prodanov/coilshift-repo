@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "id": "io.github.ivan-prodanov.fast-vnc",
+  "version": "1.0.0",
+  "sdk": ">=1.0 <2",
+  "title": "Fast VNC",
+  "summary": "The touchscreen over VNC, about 4x faster than the built-in VNC (Screen Sharing ~2 fps instead of 0.5, TigerVNC ~5), with touch and a pointer. Port 5901 over CoilShift's Tailscale, next to the built-in VNC on 5900. Password \"coilshift\" unless set. Optional smaller picture.",
+  "capabilities": [
+    "service"
+  ],
+  "settings": [
+    {
+      "id": "password",
+      "type": "secret",
+      "title": "VNC password",
+      "summary": "Optional. Without one the password is \"coilshift\". VNC checks only the first 8 characters.",
+      "group": "VNC",
+      "max_bytes": 64
+    },
+    {
+      "id": "size",
+      "type": "enum",
+      "title": "Picture size",
+      "summary": "Full is the touchscreen's own 2560x1600. 1728x1080 fills a 16-inch MacBook in full screen, for viewers that can't scale (TigerVNC). Half is 1280x800, for small screens or slow links.",
+      "group": "VNC",
+      "default": "full",
+      "values": [
+        {
+          "value": "full",
+          "title": "Full (2560x1600)"
+        },
+        {
+          "value": "mbp16",
+          "title": "1728x1080 (16-inch MacBook)"
+        },
+        {
+          "value": "half",
+          "title": "Half (1280x800)"
+        }
+      ]
+    }
+  ],
+  "hooks": {
+    "apply": [
+      {
+        "id": "apply",
+        "run": "hooks/apply.sh",
+        "rerun": "in-place",
+        "phase": "late",
+        "timeout": 30
+      }
+    ],
+    "service": [
+      {
+        "id": "vnc",
+        "run": "bin/fastvnc.sh",
+        "restart": "always"
+      }
+    ],
+    "remove": {
+      "run": "hooks/remove.sh"
+    }
+  }
+}
