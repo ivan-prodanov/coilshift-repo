@@ -18,7 +18,7 @@ it. 1.0.x dialled out to a Pi at `PI_IP:17101`; that is gone.
 - **Direct Summon** (`io.github.ivan-prodanov.direct-summon`, folder `../direct-summon/`):
   summonhelper (uid 1337), which takes `com.tesla.Webrtc` from stock `webrtc-comms`.
 
-Built from gateway `91d29b1` (direct mode, plus Direct commands), and the same runit run, finish and log scripts, apart from the
+Built from gateway `3a288f7` (direct mode, plus Direct commands), and the same runit run, finish and log scripts, apart from the
 binary paths and agw's direct-mode run line (`test/run.sh` proves it against `install-car.sh`).
 Design: [DESIGN.md](DESIGN.md). Plan: [PLAN.md](PLAN.md).
 
@@ -36,7 +36,9 @@ Direct Summon 1.0.5 (gateway `1fa81cf`), which also re-make Direct Summon's stal
 while the router replies from a second connection of the same user. Fixed in Direct Link 1.2.2 + Direct Summon
 1.0.6 (gateway `d5024a9`): replies are believed by the sender's uid (the command-router user).
 Direct Link 1.2.3 + Direct Summon 1.0.7 (gateway `91d29b1`): Summon's deadman fits the car's LTE link (owner):
-a tick echo is fresh up to 500 ms (was 150) and a hold trips after 800 ms without one (was 300). The gateway's Go source has not reached Lupine yet (Author Agreement §3.2).
+a tick echo is fresh up to 500 ms (was 150) and a hold trips after 800 ms without one (was 300).
+Direct Link 1.2.4 + Direct Summon 1.0.8 (gateway `3a288f7`): one-verb-at-a-time, the fresh-press refusal, D3's stale
+car position and the 3 m floor dropped (owner); the car's Summon status and D2's trip cause are logged. The gateway's Go source has not reached Lupine yet (Author Agreement §3.2).
 
 ## Direct commands (1.2.0)
 
@@ -87,11 +89,11 @@ camera runbook's step 2b, add its hash in `build-payloads.sh`, rebuild, publish 
 ## Build and test (this repo)
 
 The gateway's Go source (agw, camhelper, summonhelper) is in [`../gateway/`](../gateway/), at the commit the
-packages are built from (`91d29b1`; added with `git subtree --squash` from the local gateway repo, update with
+packages are built from (`3a288f7`; added with `git subtree --squash` from the local gateway repo, update with
 `git subtree pull --prefix=gateway <gateway repo> <branch> --squash`). The build uses only this repo.
 
 ```bash
-direct-link/build-payloads.sh 91d29b1 <agw sha256> <camhelper sha256> <summonhelper sha256>
+direct-link/build-payloads.sh 3a288f7 <agw sha256> <camhelper sha256> <summonhelper sha256>
 direct-link/test/run.sh
 tools/build.sh
 ```
@@ -130,7 +132,7 @@ The keys are unchanged, so the phone needs nothing. The old binaries in
 
 ## Checks after an install, an update or a reboot
 
-- `cat /run/direct-link-bin/BUILD /run/direct-summon-bin/BUILD`: `build 91d29b1` in both.
+- `cat /run/direct-link-bin/BUILD /run/direct-summon-bin/BUILD`: `build 3a288f7` in both.
 - `sha256sum /run/direct-link-bin/agw /run/direct-link-bin/camhelper /run/direct-summon-bin/summonhelper`: the reviewed hashes.
 - `sv status /run/direct-link-sv/* /run/direct-summon-sv/*`: all `run:`.
 - `iptables -S OUTPUT | grep -m1 '^-A'`: the jump to `AIRGAPP_GW_OUT`.
